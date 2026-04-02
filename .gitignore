@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+build/
+.mlaude/
+*.db
+uv.lock
+/.playwright-mcp
+mlaude-v0.1-plan.md
+.DS_Store
