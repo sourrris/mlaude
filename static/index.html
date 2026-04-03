@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="/static/manifest.json">
+<link rel="icon" href="/static/icon.png">
 <title>mlaude</title>
 <style>
   :root {
@@ -285,7 +286,7 @@
     padding: 16px 20px 24px;
     background: var(--bg-main);
   }
-  if /* Faded overlay for scroll overlap trick */
+  /* Faded overlay for scroll overlap trick */
   #input-area::before {
     content: ''; position: absolute; bottom: 100%; left: 0; right: 0; height: 40px;
     background: linear-gradient(to top, var(--bg-main), transparent); pointer-events: none;
@@ -360,7 +361,7 @@
   <!-- Sidebar -->
   <nav id="sidebar">
     <div id="sidebar-header">
-      <h1>Mlaude</h1>
+      <h1>mlaude</h1>
       <button id="new-chat-btn">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
         New
@@ -384,8 +385,8 @@
 
     <div id="messages">
       <div id="welcome">
-        <h2>Mlaude</h2>
-        <p>Your minimalist, local AI assistant.</p>
+        <h2>mlaude</h2>
+        <p>Your local AI assistant.</p>
       </div>
       <div id="messages-inner"></div>
     </div>
@@ -393,7 +394,7 @@
     <div id="input-area">
       <div id="input-area-inner">
         <div id="input-wrap">
-          <textarea id="input" rows="1" placeholder="Message Mlaude..." autofocus></textarea>
+          <textarea id="input" rows="1" placeholder="Message mlaude..." autofocus></textarea>
           <button id="send-btn" disabled aria-label="Send Message">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="12" y1="19" x2="12" y2="5"></line>
@@ -490,7 +491,7 @@
         messagesInner.innerHTML = '';
         welcome.style.display = 'none';
         msg.messages.forEach(m => appendMessage(m.role, m.content));
-        scrollToBottom();
+        requestAnimationFrame(() => scrollToBottom(false));
         // Update Title
         const s = sessions.find(s => s.id === sessionId);
         if (s) topbarTitle.textContent = s.title;
@@ -552,7 +553,7 @@
     const roleLabel = document.createElement('div');
     roleLabel.className = 'msg-role';
     if (role === 'assistant') {
-      roleLabel.innerHTML = `<div class="role-icon">${botIcon}</div> Mlaude`;
+      roleLabel.innerHTML = `<div class="role-icon">${botIcon}</div>`;
     } else {
       roleLabel.textContent = 'You';
     }
@@ -592,7 +593,7 @@
     const div = document.createElement('div');
     div.className = 'msg-container msg-assistant thinking-msg';
     div.innerHTML = `
-      <div class="msg-role"><div class="role-icon">${botIcon}</div> Mlaude</div>
+      <div class="msg-role"><div class="role-icon">${botIcon}</div></div>
       <div class="msg-content">${thinkingHTML}</div>
     `;
     messagesInner.appendChild(div);
@@ -625,8 +626,12 @@
     text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
     text = text.replace(/^# (.+)$/gm, '<h1>$1</h1>');
     text = text.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
-    text = text.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
-    text = text.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+    // Unordered lists
+    text = text.replace(/^[-*] (.+)$/gm, '<ul-li>$1</ul-li>');
+    text = text.replace(/(<ul-li>[\s\S]*?<\/ul-li>\n?)+/g, m => '<ul>' + m.replace(/<ul-li>/g,'<li>').replace(/<\/ul-li>/g,'</li>') + '</ul>');
+    // Ordered lists
+    text = text.replace(/^\d+\. (.+)$/gm, '<ol-li>$1</ol-li>');
+    text = text.replace(/(<ol-li>[\s\S]*?<\/ol-li>\n?)+/g, m => '<ol>' + m.replace(/<ol-li>/g,'<li>').replace(/<\/ol-li>/g,'</li>') + '</ol>');
 
     // Paragraphs
     text = text.replace(/\n{2,}/g, '</p><p>');
@@ -648,8 +653,8 @@
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  function scrollToBottom() {
-    messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
+  function scrollToBottom(smooth = true) {
+    messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: smooth ? 'smooth' : 'instant' });
   }
 
   // Sessions list
