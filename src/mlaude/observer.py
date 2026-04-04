@@ -44,6 +44,7 @@ class RagChunk:
     text: str
     source: str
     score: float  # lower = more similar (ChromaDB cosine distance)
+    source_type: str = "general"  # about | interest | behavior | general
 
 
 @dataclass
@@ -183,7 +184,12 @@ class RequestTrace:
                 "count": self.rag.count,
                 "duration_ms": self.rag.duration_ms,
                 "chunks": [
-                    {"source": c.source, "score": round(c.score, 3), "preview": c.text[:120]}
+                    {
+                        "source": c.source,
+                        "source_type": c.source_type,
+                        "score": round(c.score, 3),
+                        "preview": c.text[:120],
+                    }
                     for c in self.rag.chunks
                 ],
             } if self.rag else None,

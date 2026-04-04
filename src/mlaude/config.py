@@ -14,6 +14,7 @@ OLLAMA_URL = "http://localhost:11434"
 EMBEDDING_MODEL = "nomic-embed-text"
 
 SOUL_PATH = Path(__file__).resolve().parent.parent.parent / "SOUL.md"
+KNOWLEDGE_TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "knowledge"
 
 CONTEXT_MESSAGES = 20  # how many past messages to send to the LLM
 

@@ -15,6 +15,12 @@ _DEFAULT_MEMORY = """\
 
 ## Preferences
 
+## Intellectual Interests
+
+## Discussion Preferences
+
+## Knowledge Depth
+
 ## Important People
 
 ## Habits & Schedule
@@ -27,6 +33,9 @@ VALID_SECTIONS = frozenset({
     "Communication Style",
     "Work & Projects",
     "Preferences",
+    "Intellectual Interests",
+    "Discussion Preferences",
+    "Knowledge Depth",
     "Important People",
     "Habits & Schedule",
     "Notes",
@@ -64,8 +73,9 @@ def update_memory(section: str, fact: str) -> str:
         section_content = match.group(2).rstrip()
         fact_line = f"- {fact}"
 
-        # Avoid duplicate facts
-        if fact_line in section_content:
+        # Avoid duplicate facts (case-insensitive, whitespace-normalized)
+        existing_lines = [l.strip().lower() for l in section_content.splitlines()]
+        if fact_line.strip().lower() in existing_lines:
             return f"Already remembered: {fact}"
 
         new_section = f"{match.group(1)}{section_content}\n{fact_line}\n"
@@ -75,6 +85,37 @@ def update_memory(section: str, fact: str) -> str:
 
     MEMORY_PATH.write_text(content)
     return f"Remembered in {section}: {fact}"
+
+
+def delete_memory_fact(section: str, fact: str) -> str:
+    """Remove a specific fact from a section. Returns status message."""
+    if section not in VALID_SECTIONS:
+        return f"Invalid section: {section}. Valid: {', '.join(sorted(VALID_SECTIONS))}"
+
+    ensure_memory()
+    content = MEMORY_PATH.read_text()
+
+    heading = f"## {section}"
+    if heading not in content:
+        return f"Section not found: {section}"
+
+    fact_line = f"- {fact}"
+    fact_lower = fact_line.strip().lower()
+
+    lines = content.splitlines(keepends=True)
+    new_lines = []
+    removed = False
+    for line in lines:
+        if line.strip().lower() == fact_lower:
+            removed = True
+            continue
+        new_lines.append(line)
+
+    if not removed:
+        return f"Fact not found in {section}: {fact}"
+
+    MEMORY_PATH.write_text("".join(new_lines))
+    return f"Removed from {section}: {fact}"
 
 
 def overwrite_memory(raw: str) -> None:
