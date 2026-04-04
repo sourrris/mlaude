@@ -78,6 +78,16 @@ async def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/{path:path}")
+async def spa_fallback(path: str):
+    """Catch-all for SPA client-side routing — serves index.html for any non-API path."""
+    # Don't intercept API or WebSocket routes
+    if path.startswith("api/") or path.startswith("static/") or path.startswith("ws"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404)
+    return FileResponse(STATIC_DIR / "index.html")
+
+
 @app.get("/api/status")
 async def status():
     llm: OllamaProvider = app.state.llm

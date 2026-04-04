@@ -10,3 +10,6 @@ uv.lock
 /.playwright-mcp
 mlaude-v0.1-plan.md
 .DS_Store
+frontend/node_modules/
+frontend/dist/
+static/assets/
