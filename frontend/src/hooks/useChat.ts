@@ -12,6 +12,8 @@ export function useChat() {
   const ws = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUnmounting = useRef(false);
+  const thinkingAccRef = useRef("");
+  const thinkingStartRef = useRef<number | null>(null);
 
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -19,6 +21,9 @@ export function useChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [streamingThinking, setStreamingThinking] = useState(false);
+  const [thinkingContent, setThinkingContent] = useState("");
+  const [thinkingDuration, setThinkingDuration] = useState<number | null>(null);
   const [trace, setTrace] = useState<Trace | null>(null);
   const [activeToolName, setActiveToolName] = useState<string | null>(null);
   const [memoryContent, setMemoryContent] = useState<string | null>(null);
@@ -67,7 +72,6 @@ export function useChat() {
 
         case "session_created":
           setActiveSessionId(msg.session_id as string);
-          setMessages([]);
           setTrace(null);
           send({ type: "list_sessions" });
           break;
@@ -75,6 +79,27 @@ export function useChat() {
         case "history":
           setMessages((msg.messages as Message[]) ?? []);
           setTrace(null);
+          break;
+
+        case "thinking_start":
+          setStreaming(true);
+          setStreamingThinking(true);
+          thinkingAccRef.current = "";
+          setThinkingContent("");
+          thinkingStartRef.current = Date.now();
+          break;
+
+        case "thinking_token":
+          thinkingAccRef.current += (msg.content as string);
+          setThinkingContent(thinkingAccRef.current);
+          break;
+
+        case "thinking_done":
+          setStreamingThinking(false);
+          if (thinkingStartRef.current !== null) {
+            setThinkingDuration(Math.round((Date.now() - thinkingStartRef.current) / 1000));
+            thinkingStartRef.current = null;
+          }
           break;
 
         case "token":
@@ -86,13 +111,18 @@ export function useChat() {
           setStreaming(false);
           setStreamingContent((prev) => {
             if (prev) {
+              const thinking = thinkingAccRef.current || undefined;
               setMessages((msgs) => [
                 ...msgs,
-                { role: "assistant", content: prev },
+                { role: "assistant", content: prev, thinking },
               ]);
             }
             return "";
           });
+          thinkingAccRef.current = "";
+          setThinkingContent("");
+          setThinkingDuration(null);
+          setStreamingThinking(false);
           setActiveToolName(null);
           break;
 
@@ -160,6 +190,16 @@ export function useChat() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const newSession = useCallback(() => {
+    setMessages([]);
+    setActiveSessionId(null);
+    setStreaming(false);
+    setStreamingContent("");
+    setStreamingThinking(false);
+    thinkingAccRef.current = "";
+    setThinkingContent("");
+    setThinkingDuration(null);
+    setTrace(null);
+    setActiveToolName(null);
     send({ type: "new_session" });
   }, [send]);
 
@@ -168,6 +208,10 @@ export function useChat() {
       setActiveSessionId(id);
       setStreaming(false);
       setStreamingContent("");
+      setStreamingThinking(false);
+      thinkingAccRef.current = "";
+      setThinkingContent("");
+      setThinkingDuration(null);
       setActiveToolName(null);
       send({ type: "load_session", session_id: id });
     },
@@ -211,6 +255,9 @@ export function useChat() {
     messages,
     streaming,
     streamingContent,
+    streamingThinking,
+    thinkingContent,
+    thinkingDuration,
     trace,
     activeToolName,
     newSession,

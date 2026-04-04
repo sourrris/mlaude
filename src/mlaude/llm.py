@@ -73,6 +73,15 @@ def load_system_prompt(rag_context: list[dict] | None = None) -> str:
         parts.append("--- Relevant Knowledge ---\n" + "\n\n".join(general_chunks))
 
     parts.append(f"Current date and time: {now}")
+
+    # Thinking instruction — always appended last so the model reads it as a
+    # final directive before responding.
+    parts.append(
+        "When working through a non-trivial question, reason step by step inside "
+        "<think>...</think> tags before your final response. "
+        "Keep the thinking block concise and relevant — skip it for simple replies."
+    )
+
     return "\n\n".join(parts)
 
 
