@@ -21,7 +21,7 @@ interface Props {
 function StreamingCursor() {
   return (
     <motion.span
-      className="inline-block w-[2px] h-[15px] ml-0.5 rounded-full bg-[#d97757] align-text-bottom"
+      className="inline-block w-0.5 h-3.75 ml-0.5 rounded-full bg-[#d97757] align-text-bottom"
       animate={{ opacity: [1, 0] }}
       transition={{ duration: 0.6, repeat: Infinity, repeatType: "reverse", ease: "easeInOut" }}
     />

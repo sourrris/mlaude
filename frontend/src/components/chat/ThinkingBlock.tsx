@@ -25,7 +25,7 @@ export function ThinkingBlock({ thinking, isStreaming, durationSeconds }: Props)
           </span>
         </div>
         {thinking && (
-          <div className="pl-3.5 border-l-2 border-zinc-200 max-h-[160px] overflow-y-auto">
+          <div className="pl-3.5 border-l-2 border-zinc-200 max-h-40 overflow-y-auto">
             <p className="text-[12px] text-zinc-400 leading-relaxed font-mono whitespace-pre-wrap">
               {thinking}
             </p>
@@ -68,7 +68,7 @@ export function ThinkingBlock({ thinking, isStreaming, durationSeconds }: Props)
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             className="overflow-hidden"
           >
-            <div className="mt-2 pl-3.5 border-l-2 border-zinc-200 max-h-[280px] overflow-y-auto">
+            <div className="mt-2 pl-3.5 border-l-2 border-zinc-200 max-h-70 overflow-y-auto">
               <p className="text-[12px] text-zinc-400 leading-relaxed font-mono whitespace-pre-wrap py-1">
                 {thinking}
               </p>

@@ -166,7 +166,7 @@ function NavRow({
       onClick={onClick}
       className={cn(
         "group flex items-center gap-3.5 w-full",
-        "h-[44px] pl-3 pr-3 rounded-xl",
+        "h-11 pl-3 pr-3 rounded-xl",
         "text-[15px] font-normal text-[#3f3f46]",
         "hover:bg-[#eeede9] active:bg-[#e8e7e4]",
         "transition-colors duration-150 cursor-pointer"
@@ -296,7 +296,7 @@ export function SessionSidebar({
                           onMouseLeave={() => setHoveredId(null)}
                           className={cn(
                             "group flex items-center",
-                            "min-h-[40px] py-2.5 pl-3 pr-2 rounded-xl cursor-pointer",
+                            "min-h-10 py-2.5 pl-3 pr-2 rounded-xl cursor-pointer",
                             "transition-colors duration-100",
                             s.id === activeSessionId
                               ? "bg-[#e8e7e4] text-[#27272a]"
