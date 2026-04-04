@@ -21,6 +21,7 @@ export function useChat() {
   const [streamingContent, setStreamingContent] = useState("");
   const [trace, setTrace] = useState<Trace | null>(null);
   const [activeToolName, setActiveToolName] = useState<string | null>(null);
+  const [memoryContent, setMemoryContent] = useState<string | null>(null);
 
   const send = useCallback((payload: Record<string, unknown>) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
@@ -128,6 +129,14 @@ export function useChat() {
           }
           break;
 
+        case "memory":
+          setMemoryContent(msg.content as string);
+          break;
+
+        case "memory_saved":
+          // no-op — modal can close after this
+          break;
+
         case "reindex_done":
           // Could surface this in UI — for now just ignore
           break;
@@ -187,6 +196,14 @@ export function useChat() {
     send({ type: "reindex" });
   }, [send]);
 
+  const loadMemory = useCallback(() => {
+    send({ type: "get_memory" });
+  }, [send]);
+
+  const saveMemory = useCallback((content: string) => {
+    send({ type: "update_memory_raw", content });
+  }, [send]);
+
   return {
     status,
     sessions,
@@ -201,5 +218,8 @@ export function useChat() {
     deleteSession,
     sendMessage,
     reindex,
+    memoryContent,
+    loadMemory,
+    saveMemory,
   };
 }
