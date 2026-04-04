@@ -45,31 +45,7 @@ function ToolBadge({ name }: { name: string }) {
   );
 }
 
-function ThinkingDots() {
-  return (
-    <div className="flex items-center gap-1 py-1">
-      {[0, 0.2, 0.4].map((delay, i) => (
-        <motion.span
-          key={i}
-          className="w-1.5 h-1.5 rounded-full bg-zinc-400"
-          animate={{ opacity: [0.3, 1, 0.3], y: [0, -3, 0] }}
-          transition={{ duration: 1.2, repeat: Infinity, delay, ease: "easeInOut" }}
-        />
-      ))}
-    </div>
-  );
-}
 
-function AssistantLabel() {
-  return (
-    <div className="flex items-center gap-2 mb-2.5">
-      <div className="w-7 h-7 rounded-[6px] bg-[#d97757] flex items-center justify-center shrink-0 shadow-sm">
-        <span className="text-white text-[12px] font-bold tracking-tight">m</span>
-      </div>
-      <span className="text-[13px] font-medium text-zinc-500">mlaude</span>
-    </div>
-  );
-}
 
 function EmptyState() {
   const hour = new Date().getHours();
@@ -140,8 +116,6 @@ export function MessageList({
                   msg.role === "user" ? "items-end" : "items-start"
                 )}
               >
-                {msg.role === "assistant" && <AssistantLabel />}
-
                 {msg.role === "user" ? (
                   /* User bubble */
                   <div
@@ -180,7 +154,6 @@ export function MessageList({
               animate="visible"
               className="flex flex-col items-start w-full"
             >
-              <AssistantLabel />
               <ToolBadge name={activeToolName} />
             </motion.div>
           )}
@@ -193,8 +166,6 @@ export function MessageList({
               animate="visible"
               className="flex flex-col items-start w-full"
             >
-              {!activeToolName && <AssistantLabel />}
-
               {/* Thinking block — shown while model reasons and after it finishes */}
               {streamingThinking ? (
                 <ThinkingBlock thinking={thinkingContent} isStreaming={true} />
@@ -217,7 +188,7 @@ export function MessageList({
                   <StreamingCursor />
                 </div>
               ) : !activeToolName && !streamingThinking && !thinkingContent ? (
-                <ThinkingDots />
+                <ThinkingBlock thinking="" isStreaming={true} />
               ) : null}
             </motion.div>
           )}

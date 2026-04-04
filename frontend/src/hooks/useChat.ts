@@ -231,6 +231,7 @@ export function useChat() {
       const sid = activeSessionId ?? "";
       setMessages((prev) => [...prev, { role: "user", content }]);
       setTrace(null);
+      setStreaming(true);
       send({ type: "message", session_id: sid, content });
     },
     [send, activeSessionId, streaming]
