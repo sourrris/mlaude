@@ -335,6 +335,128 @@
     margin-top: 10px; font-weight: 500;
   }
 
+  /* Debug trace panel */
+  .trace-toggle {
+    background: none; border: none; cursor: pointer;
+    color: var(--text-faint); font-size: 11px; font-weight: 500;
+    padding: 2px 6px; border-radius: 4px; margin-top: 6px;
+    display: inline-flex; align-items: center; gap: 4px;
+    transition: color 0.15s, background 0.15s; letter-spacing: 0.02em;
+  }
+  .trace-toggle:hover { color: var(--text-dim); background: var(--bg-hover); }
+  .trace-toggle.has-warnings { color: #f59e0b; }
+  .trace-toggle.has-errors { color: #ef4444; }
+
+  .trace-panel {
+    display: none; margin-top: 6px;
+    background: var(--bg-surface); border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm); overflow: hidden;
+    font-size: 12px; font-family: var(--font-mono);
+  }
+  .trace-panel.open { display: block; }
+
+  .trace-row {
+    display: grid; grid-template-columns: 90px 1fr;
+    padding: 7px 12px; border-bottom: 1px solid var(--border-color);
+    gap: 12px; align-items: start;
+  }
+  .trace-row:last-child { border-bottom: none; }
+  .trace-label { color: var(--text-faint); font-weight: 500; white-space: nowrap; padding-top: 1px; }
+  .trace-value { color: var(--text-dim); line-height: 1.5; word-break: break-word; }
+  .trace-value .ok { color: #10b981; }
+  .trace-value .warn { color: #f59e0b; }
+  .trace-value .err { color: #ef4444; }
+  .trace-value .dim { color: var(--text-faint); }
+
+  .trace-warn-block {
+    padding: 8px 12px; background: rgba(245,158,11,0.08);
+    border-top: 1px solid rgba(245,158,11,0.2);
+    color: #f59e0b; font-size: 12px; line-height: 1.6;
+  }
+  .trace-err-block {
+    padding: 8px 12px; background: rgba(239,68,68,0.08);
+    border-top: 1px solid rgba(239,68,68,0.2);
+    color: #ef4444; font-size: 12px; line-height: 1.6;
+  }
+
+  /* Tool indicator */
+  .tool-indicator {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; margin: 4px 0;
+    background: var(--bg-hover); border-radius: var(--radius-sm);
+    font-size: 13px; color: var(--text-dim); font-weight: 500;
+    border-left: 3px solid var(--text-faint);
+    animation: fadeIn 0.2s ease;
+  }
+  .tool-indicator.done { border-left-color: #10b981; opacity: 0.7; }
+  .tool-indicator svg { flex-shrink: 0; }
+  .tool-indicator .tool-query { color: var(--text-main); font-weight: 400; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  /* Memory panel */
+  #memory-panel {
+    position: fixed; top: 0; right: -400px; width: 400px; max-width: 90vw;
+    height: 100vh; background: var(--bg-surface);
+    border-left: 1px solid var(--border-color);
+    z-index: 200; display: flex; flex-direction: column;
+    transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: -4px 0 24px rgba(0,0,0,0.15);
+  }
+  #memory-panel.open { right: 0; }
+  #memory-panel-header {
+    padding: 16px; border-bottom: 1px solid var(--border-color);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  #memory-panel-header h3 { font-size: 15px; font-weight: 600; }
+  #memory-content {
+    flex: 1; overflow-y: auto; padding: 16px;
+    font-size: 13px; line-height: 1.7; color: var(--text-dim);
+    white-space: pre-wrap; font-family: var(--font-mono);
+  }
+  #memory-edit {
+    display: none; flex: 1; width: 100%; padding: 16px;
+    background: var(--bg-input); color: var(--text-main); border: none;
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.7;
+    resize: none; outline: none;
+  }
+  #memory-panel-footer {
+    padding: 12px 16px; border-top: 1px solid var(--border-color);
+    display: flex; gap: 8px; justify-content: flex-end;
+  }
+  .mem-btn {
+    padding: 6px 14px; border-radius: var(--radius-sm); font-size: 13px;
+    font-weight: 500; cursor: pointer; border: 1px solid var(--border-color);
+    background: transparent; color: var(--text-main); transition: background 0.2s;
+  }
+  .mem-btn:hover { background: var(--bg-hover); }
+  .mem-btn.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+  .mem-btn.primary:hover { opacity: 0.9; }
+
+  #memory-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 199;
+    opacity: 0; pointer-events: none; transition: opacity 0.3s;
+  }
+  #memory-overlay.active { opacity: 1; pointer-events: auto; }
+
+  /* Memory btn in topbar */
+  #memory-btn {
+    background: none; border: none; color: var(--text-dim); cursor: pointer;
+    padding: 4px; line-height: 1; display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-sm); transition: background-color 0.2s;
+  }
+  #memory-btn:hover { background: var(--bg-hover); color: var(--text-main); }
+
+  /* Toast notification */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--bg-surface); border: 1px solid var(--border-color);
+    color: var(--text-main); padding: 10px 20px; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 500; box-shadow: var(--shadow-md);
+    z-index: 300; animation: toastIn 0.3s ease, toastOut 0.3s ease 2.7s forwards;
+  }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } }
+  @keyframes toastOut { to { opacity: 0; transform: translateX(-50%) translateY(10px); } }
+
   /* Mobile */
   @media (max-width: 768px) {
     #sidebar { position: fixed; z-index: 100; height: 100%; box-shadow: var(--shadow-md); }
@@ -377,6 +499,9 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
       </button>
       <span id="topbar-title">New chat</span>
+      <button id="memory-btn" aria-label="Memory" title="Memory">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4z"/><circle cx="12" cy="15" r="2"/></svg>
+      </button>
       <div id="status-container">
         <span id="status-dot"></span>
         <span id="status-text">Disconnected</span>
@@ -406,6 +531,22 @@
       </div>
     </div>
   </div>
+
+  <!-- Memory Panel -->
+  <div id="memory-overlay"></div>
+  <div id="memory-panel">
+    <div id="memory-panel-header">
+      <h3>Memory</h3>
+      <button class="mem-btn" id="memory-close-btn">&times;</button>
+    </div>
+    <div id="memory-content"></div>
+    <textarea id="memory-edit"></textarea>
+    <div id="memory-panel-footer">
+      <button class="mem-btn" id="memory-edit-btn">Edit</button>
+      <button class="mem-btn primary" id="memory-save-btn" style="display:none;">Save</button>
+      <button class="mem-btn" id="memory-cancel-btn" style="display:none;">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -433,8 +574,21 @@
   const toggleSidebar = document.getElementById('toggle-sidebar');
   const newChatBtn = document.getElementById('new-chat-btn');
 
+  // Memory panel
+  const memoryBtn = document.getElementById('memory-btn');
+  const memoryPanel = document.getElementById('memory-panel');
+  const memoryOverlay = document.getElementById('memory-overlay');
+  const memoryContent = document.getElementById('memory-content');
+  const memoryEditArea = document.getElementById('memory-edit');
+  const memoryEditBtn = document.getElementById('memory-edit-btn');
+  const memorySaveBtn = document.getElementById('memory-save-btn');
+  const memoryCancelBtn = document.getElementById('memory-cancel-btn');
+  const memoryCloseBtn = document.getElementById('memory-close-btn');
+
   // SVG Icons
   const botIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a2 2 0 0 1 2 2c-.001.696-.328 1.348-.89 1.76M6.41 6.55a2 2 0 0 0-2.31 3.2M17.59 6.55a2 2 0 0 1 2.31 3.2M4.77 15.65A2 2 0 0 0 6.4 19M19.23 15.65a2 2 0 0 1-1.63 3.35M12 22a2 2 0 0 0 2-2M9 13v-3a3 3 0 0 1 6 0v3"></path><path d="M12 17c-2 0-3.5-1-3.5-1M12 17c2 0 3.5-1 3.5-1"></path></svg>`;
+  const searchIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`;
+  const memoryIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4z"/><circle cx="12" cy="15" r="2"/></svg>`;
   const thinkingHTML = `<div class="thinking">Working<div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div></div>`;
 
   // WebSocket
@@ -533,6 +687,32 @@
           topbarTitle.textContent = 'New chat';
         }
         send({ type: 'list_sessions' });
+        break;
+
+      case 'trace':
+        handleTrace(msg.data);
+        break;
+
+      case 'tool_start':
+        if (isThinking) { removeThinkingIndicator(); isThinking = false; }
+        addToolIndicator(msg.tool, msg.input);
+        scrollToBottom();
+        break;
+
+      case 'tool_done':
+        updateToolIndicator(msg.tool);
+        break;
+
+      case 'memory':
+        memoryContent.textContent = msg.content || '(empty)';
+        break;
+
+      case 'memory_saved':
+        showToast('Memory saved');
+        break;
+
+      case 'reindex_done':
+        showToast(`Knowledge re-indexed: ${msg.chunks} chunks`);
         break;
 
       case 'error':
@@ -743,6 +923,187 @@
     input.focus();
     closeSidebarOnMobile();
   });
+
+  // Trace store: maps session_id → latest trace (we match to streaming msg)
+  let pendingTrace = null;
+
+  function handleTrace(data) {
+    // Find the last assistant message and attach the debug panel to it
+    const msgs = messagesInner.querySelectorAll('.msg-container.msg-assistant');
+    const lastMsg = msgs[msgs.length - 1];
+    if (!lastMsg) return;
+    renderTracePanel(lastMsg, data);
+  }
+
+  function renderTracePanel(msgEl, t) {
+    // Create toggle button
+    const toggle = document.createElement('button');
+    const hasErrors = t.tool_calls.some(tc => tc.error);
+    const hasWarnings = t.warnings && t.warnings.length > 0;
+    toggle.className = 'trace-toggle' + (hasErrors ? ' has-errors' : hasWarnings ? ' has-warnings' : '');
+
+    const ctxPct = t.context_pct || 0;
+    const ctxColor = ctxPct >= 90 ? '🔴' : ctxPct >= 80 ? '🟡' : '🟢';
+    const warnBadge = hasErrors ? ' ⚠' : hasWarnings ? ' ·' + t.warnings.length + ' warn' : '';
+    toggle.textContent = `› trace · ${t.total_ms}ms · ctx ${ctxPct}%${warnBadge}`;
+
+    const panel = document.createElement('div');
+    panel.className = 'trace-panel';
+
+    // Context row
+    const ctxTok = t.context_tokens.toLocaleString();
+    const ctxLim = (t.context_limit || 32768).toLocaleString();
+    const ctxClass = ctxPct >= 90 ? 'err' : ctxPct >= 80 ? 'warn' : 'ok';
+    addTraceRow(panel, 'Context',
+      `<span class="${ctxClass}">${ctxTok} / ${ctxLim} tok (${ctxPct}%)</span> <span class="dim">· ${t.history_messages} msgs</span>`
+    );
+
+    // RAG row
+    if (t.rag) {
+      const ragClass = t.rag.count === 0 ? 'warn' : 'ok';
+      let ragVal = `<span class="${ragClass}">${t.rag.count} chunks</span> · ${t.rag.duration_ms}ms`;
+      if (t.rag.chunks && t.rag.chunks.length) {
+        const sources = [...new Set(t.rag.chunks.map(c => c.source))].join(', ');
+        ragVal += `<br><span class="dim">${escapeHtml(sources)}</span>`;
+        // Show scores
+        const scores = t.rag.chunks.map(c => c.score.toFixed(3)).join(' · ');
+        ragVal += `<br><span class="dim">scores: ${scores}</span>`;
+      }
+      addTraceRow(panel, 'RAG', ragVal);
+    } else {
+      addTraceRow(panel, 'RAG', '<span class="dim">no knowledge indexed</span>');
+    }
+
+    // Tool calls row
+    if (t.tool_calls && t.tool_calls.length) {
+      const toolLines = t.tool_calls.map(tc => {
+        const cls = tc.error ? 'err' : 'ok';
+        const queryArg = tc.args.query || tc.args.fact || JSON.stringify(tc.args).slice(0, 60);
+        return `<span class="${cls}">${escapeHtml(tc.name)}</span> <span class="dim">"${escapeHtml(queryArg)}"</span> · ${tc.duration_ms}ms`;
+      });
+      addTraceRow(panel, 'Tools', toolLines.join('<br>'));
+    } else {
+      addTraceRow(panel, 'Tools', '<span class="dim">none</span>');
+    }
+
+    // Memory row
+    const memWrites = t.memory_writes && t.memory_writes.length
+      ? `<span class="ok">${t.memory_writes.length} write${t.memory_writes.length > 1 ? 's' : ''}</span> · <span class="dim">${escapeHtml(t.memory_writes.join('; ').slice(0, 80))}</span>`
+      : `<span class="dim">no writes</span>`;
+    addTraceRow(panel, 'Memory',
+      `${memWrites} <span class="dim">· ${t.memory_tokens} tok injected</span>`
+    );
+
+    // Timing row
+    addTraceRow(panel, 'Timing',
+      `first token ${t.first_token_ms}ms · total ${t.total_ms}ms · resp ~${t.response_tokens} tok`
+    );
+
+    // Warnings / errors block
+    if (hasErrors || hasWarnings) {
+      const warnDiv = document.createElement('div');
+      warnDiv.className = hasErrors ? 'trace-err-block' : 'trace-warn-block';
+      warnDiv.innerHTML = t.warnings.map(w => `⚠ ${escapeHtml(w)}`).join('<br>');
+      panel.appendChild(warnDiv);
+    }
+
+    toggle.addEventListener('click', () => {
+      panel.classList.toggle('open');
+      toggle.textContent = panel.classList.contains('open')
+        ? toggle.textContent.replace('›', '‹')
+        : toggle.textContent.replace('‹', '›');
+    });
+
+    const contentDiv = msgEl.querySelector('.msg-content');
+    contentDiv.appendChild(toggle);
+    contentDiv.appendChild(panel);
+  }
+
+  function addTraceRow(panel, label, valueHTML) {
+    const row = document.createElement('div');
+    row.className = 'trace-row';
+    row.innerHTML = `<div class="trace-label">${label}</div><div class="trace-value">${valueHTML}</div>`;
+    panel.appendChild(row);
+  }
+
+  // Tool indicators
+  function addToolIndicator(toolName, toolInput) {
+    const div = document.createElement('div');
+    div.className = 'tool-indicator';
+    div.dataset.tool = toolName;
+    const icon = toolName === 'web_search' ? searchIcon : memoryIcon;
+    const label = toolName === 'web_search' ? 'Searching' : 'Updating memory';
+    const detail = toolInput?.query || toolInput?.fact || '';
+    div.innerHTML = `${icon} <span>${label}</span>${detail ? ` <span class="tool-query">"${escapeHtml(detail)}"</span>` : ''}<div class="thinking-dots" style="margin-left:4px;"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>`;
+    messagesInner.appendChild(div);
+  }
+
+  function updateToolIndicator(toolName) {
+    const indicators = messagesInner.querySelectorAll(`.tool-indicator[data-tool="${toolName}"]`);
+    const el = indicators[indicators.length - 1];
+    if (el) {
+      el.classList.add('done');
+      const dots = el.querySelector('.thinking-dots');
+      if (dots) dots.remove();
+    }
+  }
+
+  // Toast
+  function showToast(message) {
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = message;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  }
+
+  // Memory panel
+  let memoryEditing = false;
+
+  function openMemoryPanel() {
+    memoryPanel.classList.add('open');
+    memoryOverlay.classList.add('active');
+    send({ type: 'get_memory' });
+  }
+
+  function closeMemoryPanel() {
+    memoryPanel.classList.remove('open');
+    memoryOverlay.classList.remove('active');
+    exitMemoryEdit();
+  }
+
+  function enterMemoryEdit() {
+    memoryEditing = true;
+    memoryEditArea.value = memoryContent.textContent;
+    memoryContent.style.display = 'none';
+    memoryEditArea.style.display = 'block';
+    memoryEditBtn.style.display = 'none';
+    memorySaveBtn.style.display = 'inline-flex';
+    memoryCancelBtn.style.display = 'inline-flex';
+    memoryEditArea.focus();
+  }
+
+  function exitMemoryEdit() {
+    memoryEditing = false;
+    memoryContent.style.display = 'block';
+    memoryEditArea.style.display = 'none';
+    memoryEditBtn.style.display = 'inline-flex';
+    memorySaveBtn.style.display = 'none';
+    memoryCancelBtn.style.display = 'none';
+  }
+
+  function saveMemory() {
+    send({ type: 'update_memory_raw', content: memoryEditArea.value });
+    memoryContent.textContent = memoryEditArea.value;
+    exitMemoryEdit();
+  }
+
+  memoryBtn.addEventListener('click', openMemoryPanel);
+  memoryCloseBtn.addEventListener('click', closeMemoryPanel);
+  memoryOverlay.addEventListener('click', closeMemoryPanel);
+  memoryEditBtn.addEventListener('click', enterMemoryEdit);
+  memorySaveBtn.addEventListener('click', saveMemory);
+  memoryCancelBtn.addEventListener('click', exitMemoryEdit);
 
   // PWA Registration
   if ('serviceWorker' in navigator) {

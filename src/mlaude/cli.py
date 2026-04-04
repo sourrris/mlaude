@@ -30,7 +30,7 @@ def serve(
         pass
 
     console.print(Panel(
-        f"[bold]mlaude[/bold] v0.1\n\n"
+        f"[bold]mlaude[/bold] v0.2\n\n"
         f"  Local:   [bold]http://localhost:{port}[/bold]\n"
         f"  Network: [bold]http://{lan_ip}:{port}[/bold]\n\n"
         f"  [dim]Stop with Ctrl+C[/dim]",
