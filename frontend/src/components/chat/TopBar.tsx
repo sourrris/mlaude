@@ -11,54 +11,57 @@ interface Props {
   onOpenTrace: () => void;
 }
 
-const STATUS_LABEL: Record<ConnectionStatus, string> = {
-  connecting:   "connecting",
-  connected:    "online",
-  disconnected: "offline",
-};
-
-const STATUS_COLOR: Record<ConnectionStatus, string> = {
-  connecting:   "bg-yellow-500",
-  connected:    "bg-emerald-500",
-  disconnected: "bg-red-500",
-};
-
 export function TopBar({ title, status, sidebarOpen, onToggleSidebar, trace, onOpenTrace }: Props) {
+  const isOnline = status === "connected";
+  const isConnecting = status === "connecting";
+
   return (
-    <header className="flex items-center gap-3 px-4 py-3 border-b border-[--color-border] bg-[--color-bg] min-h-[48px]">
+    <header className="flex items-center gap-3 px-4 h-12 border-b border-zinc-800 bg-zinc-950 shrink-0">
       <button
         onClick={onToggleSidebar}
-        className="p-1.5 rounded-[--radius-sm] text-[--color-text-3] hover:text-[--color-text] hover:bg-[--color-surface] transition-colors"
+        className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors duration-100"
+        title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
       >
-        {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+        {sidebarOpen
+          ? <PanelLeftClose size={15} />
+          : <PanelLeftOpen size={15} />
+        }
       </button>
 
-      <span className="flex-1 text-[13px] text-[--color-text-2] font-medium truncate text-center">
+      <span className="flex-1 text-[13px] text-zinc-500 truncate text-center">
         {title ?? ""}
       </span>
 
-      {/* Trace button — only shown when trace exists */}
+      {/* Trace button */}
       {trace && (
         <button
           onClick={onOpenTrace}
           className={cn(
-            "flex items-center gap-1.5 px-2.5 py-1.5 rounded-[--radius-sm] text-[12px] font-medium",
-            "text-[--color-text-3] hover:text-[--color-text-2] hover:bg-[--color-surface] transition-colors",
-            trace.warnings.length > 0 && "text-yellow-500 hover:text-yellow-400"
+            "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] font-medium transition-colors duration-100",
+            trace.warnings.length > 0
+              ? "text-amber-400 hover:bg-amber-400/10"
+              : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
           )}
         >
           <Activity size={13} />
-          Trace
+          <span>Trace</span>
           {trace.warnings.length > 0 && (
-            <span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
           )}
         </button>
       )}
 
-      {/* Connection status */}
-      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-[--color-surface] text-[11px] font-medium text-[--color-text-3]">
-        <span className={cn("w-1.5 h-1.5 rounded-full", STATUS_COLOR[status])} />
-        {STATUS_LABEL[status]}
+      {/* Status pill */}
+      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800">
+        <span className={cn(
+          "w-1.5 h-1.5 rounded-full",
+          isOnline ? "bg-emerald-500" :
+          isConnecting ? "bg-amber-400 animate-pulse" :
+          "bg-red-500"
+        )} />
+        <span className="text-[11px] font-medium text-zinc-500">
+          {isOnline ? "online" : isConnecting ? "connecting" : "offline"}
+        </span>
       </div>
     </header>
   );
