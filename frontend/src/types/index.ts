@@ -9,6 +9,7 @@ export interface Message {
   session_id?: string;
   role: "user" | "assistant" | "system";
   content: string;
+  thinking?: string;
   created_at?: string;
 }
 

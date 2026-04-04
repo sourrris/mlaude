@@ -211,8 +211,14 @@ async def websocket_endpoint(ws: WebSocket):
                     len(MEMORY_PATH.read_text()) // 4 if MEMORY_PATH.exists() else 0
                 )
 
-                # --- Stream with tools ---
+                # --- Stream with tools + <think> tag parsing ---
+                THINK_OPEN = "<think>"
+                THINK_CLOSE = "</think>"
                 full_response = ""
+                full_thinking = ""
+                in_thinking = False
+                buf = ""
+
                 try:
                     async for event in llm.stream_with_tools(system, llm_messages, registry, trace=trace):
                         if isinstance(event, ToolEvent):
@@ -222,9 +228,55 @@ async def websocket_endpoint(ws: WebSocket):
                                 "input": event.tool_input,
                                 "output": event.tool_output,
                             })
+                            continue
+
+                        buf += event
+
+                        # State machine: route tokens to thinking vs. response streams
+                        while True:
+                            if not in_thinking:
+                                if THINK_OPEN in buf:
+                                    pre = buf[: buf.index(THINK_OPEN)]
+                                    if pre:
+                                        full_response += pre
+                                        await ws.send_json({"type": "token", "content": pre})
+                                    buf = buf[buf.index(THINK_OPEN) + len(THINK_OPEN):]
+                                    in_thinking = True
+                                    await ws.send_json({"type": "thinking_start"})
+                                else:
+                                    # Flush everything safe (keep tail in case tag spans chunks)
+                                    safe = max(0, len(buf) - len(THINK_OPEN) + 1)
+                                    if safe > 0:
+                                        full_response += buf[:safe]
+                                        await ws.send_json({"type": "token", "content": buf[:safe]})
+                                        buf = buf[safe:]
+                                    break
+                            else:
+                                if THINK_CLOSE in buf:
+                                    chunk = buf[: buf.index(THINK_CLOSE)]
+                                    if chunk:
+                                        full_thinking += chunk
+                                        await ws.send_json({"type": "thinking_token", "content": chunk})
+                                    buf = buf[buf.index(THINK_CLOSE) + len(THINK_CLOSE):]
+                                    in_thinking = False
+                                    await ws.send_json({"type": "thinking_done"})
+                                else:
+                                    safe = max(0, len(buf) - len(THINK_CLOSE) + 1)
+                                    if safe > 0:
+                                        full_thinking += buf[:safe]
+                                        await ws.send_json({"type": "thinking_token", "content": buf[:safe]})
+                                        buf = buf[safe:]
+                                    break
+
+                    # Flush any remaining buffer
+                    if buf.strip():
+                        if in_thinking:
+                            full_thinking += buf
+                            await ws.send_json({"type": "thinking_token", "content": buf})
                         else:
-                            full_response += event
-                            await ws.send_json({"type": "token", "content": event})
+                            full_response += buf
+                            await ws.send_json({"type": "token", "content": buf})
+
                 except Exception as e:
                     logger.exception("LLM streaming error")
                     await ws.send_json({"type": "error", "content": f"LLM error: {e}"})

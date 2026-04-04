@@ -16,20 +16,20 @@ export function TopBar({ title, status, sidebarOpen, onToggleSidebar, trace, onO
   const isConnecting = status === "connecting";
 
   return (
-    <header className="flex items-center gap-3 px-4 h-12 border-b border-zinc-800 bg-zinc-950 shrink-0">
+    <header className="flex items-center gap-3 px-4 h-14 border-b border-zinc-100 bg-white shrink-0 top-0 sticky z-20">
       <button
         onClick={onToggleSidebar}
-        className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors duration-100"
+        className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors duration-100"
         title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
       >
         {sidebarOpen
-          ? <PanelLeftClose size={15} />
-          : <PanelLeftOpen size={15} />
+          ? <PanelLeftClose size={18} />
+          : <PanelLeftOpen size={18} />
         }
       </button>
 
-      <span className="flex-1 text-[13px] text-zinc-500 truncate text-center">
-        {title ?? ""}
+      <span className="flex-1 text-[13px] font-medium text-zinc-600 truncate text-center">
+        {title ?? "New chat"}
       </span>
 
       {/* Trace button */}
@@ -39,20 +39,20 @@ export function TopBar({ title, status, sidebarOpen, onToggleSidebar, trace, onO
           className={cn(
             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] font-medium transition-colors duration-100",
             trace.warnings.length > 0
-              ? "text-amber-400 hover:bg-amber-400/10"
-              : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+              ? "text-[#d97757] bg-orange-50 hover:bg-orange-100"
+              : "text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100"
           )}
         >
-          <Activity size={13} />
+          <Activity size={14} />
           <span>Trace</span>
           {trace.warnings.length > 0 && (
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            <span className="w-1.5 h-1.5 rounded-full bg-[#d97757]" />
           )}
         </button>
       )}
 
       {/* Status pill */}
-      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800">
+      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-50 border border-zinc-200">
         <span className={cn(
           "w-1.5 h-1.5 rounded-full",
           isOnline ? "bg-emerald-500" :
