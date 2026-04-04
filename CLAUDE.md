@@ -11,9 +11,14 @@
   ## Commands                                                                                                                                                  
                                                          
   ```bash
-  uv sync                    # install dependencies
+  uv sync                    # install Python dependencies
+  cd frontend && npm install # install frontend dependencies (first time)
+  cd frontend && npm run build  # build React app → static/
   uv run mlaude              # start server on http://0.0.0.0:7474
-  uv run mlaude --port 8080  # custom port                        
+  uv run mlaude --port 8080  # custom port
+
+  # Frontend dev mode (hot reload, proxies to FastAPI on :7474):
+  cd frontend && npm run dev # runs on http://localhost:5173                        
                                                                                                                                                                
   Requires Ollama running locally with llama3.1:8b-instruct-q4_K_M pulled.
                                                                                                                                                                
@@ -44,7 +49,8 @@
   - No tests. Manual testing only.                                                                                                                             
   - No commits unless explicitly asked. Never stage, commit, or push without direct instruction.
   - Conservative versioning. Use v0.x for early builds, not v1.                                                                                                
-  - Single-file frontend. All UI lives in static/index.html — no framework, no bundler.
+  - Frontend is Vite + React + TypeScript in frontend/. Build with `cd frontend && npm run build`. Output goes to static/.
+  - Dev mode: `cd frontend && npm run dev` (port 5173, proxies API/WS to :7474).
   - uv is the package manager (not pip directly).                                                                                                              
    
   --- 
