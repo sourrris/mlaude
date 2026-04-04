@@ -72,6 +72,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="mlaude", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# Vite builds assets to static/assets/ but references them as /assets/ in HTML
+ASSETS_DIR = STATIC_DIR / "assets"
+if ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+
 
 @app.get("/")
 async def index():

@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
   },
+  base: "/",  // assets served at /assets/ — matched by server.py /assets mount
   build: {
     outDir: "../static",
     emptyOutDir: false, // preserve manifest.json and sw.js
