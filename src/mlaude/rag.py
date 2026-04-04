@@ -1,4 +1,4 @@
-"""RAG knowledge base — ChromaDB + Ollama nomic-embed-text."""
+"""RAG knowledge base — ChromaDB + Ollama nomic-embed-text (v2 pipeline)."""
 
 import hashlib
 import logging
@@ -14,14 +14,43 @@ logger = logging.getLogger("mlaude")
 
 COLLECTION_NAME = "knowledge"
 CHUNK_MAX_TOKENS = 500  # approximate, split on sections/paragraphs
-RELEVANCE_THRESHOLD = 0.45  # cosine distance — lower is more similar, discard above this
+
+# Cosine distance thresholds — LOWER = more similar, HIGHER = more lenient (allows weaker matches)
+# Behavioral/about chunks: 0.55 — worth injecting even on weaker signal
+# Factual/general chunks: 0.45 — only inject when clearly relevant
+_THRESHOLD_BEHAVIORAL = 0.55
+_THRESHOLD_DEFAULT = 0.45
 
 
-def _chunk_markdown(text: str, source: str) -> list[dict]:
-    """Split markdown text into chunks by ## headings or double newlines."""
+def _detect_source_type(relative_path: str) -> str:
+    """Infer source type from the file's directory within the knowledge base."""
+    parts = Path(relative_path).parts
+    if not parts:
+        return "general"
+    top = parts[0].lower()
+    if top == "about":
+        return "about"
+    if top in ("interests", "interest"):
+        return "interest"
+    if top in ("behavior", "behaviour"):
+        return "behavior"
+    return "general"
+
+
+def _chunk_markdown_v2(text: str, source: str, source_type: str) -> list[dict]:
+    """Split markdown into chunks with heading hierarchy preserved as context prefix.
+
+    Every chunk is prefixed with its page title and section heading so that
+    chunks retrieved out of context still tell the LLM where they came from.
+    Format: "[{source_type}] {page_title} > {section_heading}\n\n{content}"
+    """
     chunks = []
 
-    # Split on ## headings first
+    # Extract top-level # heading as page title
+    title_match = re.match(r"^#\s+(.+)$", text.strip(), re.MULTILINE)
+    page_title = title_match.group(1).strip() if title_match else Path(source).stem.replace("_", " ").title()
+
+    # Split on ## headings
     sections = re.split(r"\n(?=## )", text)
 
     for section in sections:
@@ -29,29 +58,59 @@ def _chunk_markdown(text: str, source: str) -> list[dict]:
         if not section:
             continue
 
-        # If a section is too long, split on double newlines
+        # Extract ## heading for this section
+        section_heading_match = re.match(r"^##\s+(.+)$", section, re.MULTILINE)
+        if section_heading_match:
+            section_heading = section_heading_match.group(1).strip()
+        else:
+            section_heading = ""
+
+        prefix = f"[{source_type}] {page_title}"
+        if section_heading:
+            prefix = f"{prefix} > {section_heading}"
+
+        # If section is too long, split on double newlines
         words = section.split()
         if len(words) > CHUNK_MAX_TOKENS:
             paragraphs = re.split(r"\n{2,}", section)
             current = ""
             for para in paragraphs:
-                if len((current + "\n\n" + para).split()) > CHUNK_MAX_TOKENS and current:
-                    chunks.append({"text": current.strip(), "source": source})
+                combined = f"{current}\n\n{para}" if current else para
+                if len(combined.split()) > CHUNK_MAX_TOKENS and current:
+                    chunks.append({
+                        "text": f"{prefix}\n\n{current.strip()}",
+                        "source": source,
+                        "source_type": source_type,
+                    })
                     current = para
                 else:
-                    current = f"{current}\n\n{para}" if current else para
+                    current = combined
             if current.strip():
-                chunks.append({"text": current.strip(), "source": source})
+                chunks.append({
+                    "text": f"{prefix}\n\n{current.strip()}",
+                    "source": source,
+                    "source_type": source_type,
+                })
         else:
-            chunks.append({"text": section, "source": source})
+            chunks.append({
+                "text": f"{prefix}\n\n{section}",
+                "source": source,
+                "source_type": source_type,
+            })
 
     return chunks
 
 
 def _doc_id(source: str, idx: int) -> str:
-    """Deterministic ID for a chunk."""
-    h = hashlib.md5(f"{source}:{idx}".encode()).hexdigest()[:12]
-    return f"{h}"
+    """Deterministic chunk ID."""
+    return hashlib.md5(f"{source}:{idx}".encode()).hexdigest()[:12]
+
+
+def _adaptive_n(query: str) -> int:
+    """Return number of chunks to retrieve based on query complexity."""
+    if len(query.split()) > 20 or query.count("?") > 1:
+        return 7
+    return 4
 
 
 class KnowledgeBase:
@@ -88,8 +147,9 @@ class KnowledgeBase:
         all_chunks: list[dict] = []
         for path in md_files:
             relative = str(path.relative_to(KNOWLEDGE_DIR))
+            source_type = _detect_source_type(relative)
             text = path.read_text()
-            chunks = _chunk_markdown(text, relative)
+            chunks = _chunk_markdown_v2(text, relative, source_type)
             all_chunks.extend(chunks)
 
         if not all_chunks:
@@ -97,9 +157,8 @@ class KnowledgeBase:
 
         ids = [_doc_id(c["source"], i) for i, c in enumerate(all_chunks)]
         documents = [c["text"] for c in all_chunks]
-        metadatas = [{"source": c["source"]} for c in all_chunks]
+        metadatas = [{"source": c["source"], "source_type": c["source_type"]} for c in all_chunks]
 
-        # ChromaDB has a batch limit, upsert in batches of 100
         batch_size = 100
         for start in range(0, len(ids), batch_size):
             end = start + batch_size
@@ -112,28 +171,55 @@ class KnowledgeBase:
         logger.info("Indexed %d chunks from %d files", len(all_chunks), len(md_files))
         return len(all_chunks)
 
-    def query(self, text: str, n: int = 5) -> list[dict]:
-        """Return top-n relevant chunks with source and distance score.
+    def query_v2(self, text: str, conversation_context: str | None = None) -> list[dict]:
+        """Return relevant chunks with source_type metadata.
 
-        Each dict: {"text": str, "source": str, "score": float}
+        Builds a composite query from the current message + recent conversation context
+        (catches cases like "what about the thermodynamics angle?" where prior turn
+        establishes the topic). Applies per-source-type thresholds.
+
+        Each dict: {"text": str, "source": str, "source_type": str, "score": float}
         Lower score = more similar (ChromaDB cosine distance).
         """
         if self.collection.count() == 0:
             return []
+
+        composite_query = text
+        if conversation_context:
+            composite_query = f"{text} {conversation_context}"
+
+        n = _adaptive_n(text)
+
         try:
             results = self.collection.query(
-                query_texts=[text],
+                query_texts=[composite_query],
                 n_results=min(n, self.collection.count()),
                 include=["documents", "metadatas", "distances"],
             )
-            docs = results.get("documents", [[]])[0]
-            metas = results.get("metadatas", [[]])[0]
-            distances = results.get("distances", [[]])[0]
-            return [
-                {"text": doc, "source": meta.get("source", "?"), "score": dist}
-                for doc, meta, dist in zip(docs, metas, distances)
-                if doc and dist <= RELEVANCE_THRESHOLD
-            ]
         except Exception as e:
             logger.warning("RAG query failed: %s", e)
             return []
+
+        docs = results.get("documents", [[]])[0]
+        metas = results.get("metadatas", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+
+        chunks = []
+        for doc, meta, dist in zip(docs, metas, distances):
+            if not doc:
+                continue
+            source_type = meta.get("source_type", "general")
+            threshold = _THRESHOLD_BEHAVIORAL if source_type in ("about", "behavior") else _THRESHOLD_DEFAULT
+            if dist <= threshold:
+                chunks.append({
+                    "text": doc,
+                    "source": meta.get("source", "?"),
+                    "source_type": source_type,
+                    "score": dist,
+                })
+
+        return chunks
+
+    def query(self, text: str, n: int = 5) -> list[dict]:
+        """Backwards-compatible query. Delegates to query_v2."""
+        return self.query_v2(text)

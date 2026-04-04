@@ -11,17 +11,40 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from mlaude import db
-from mlaude.config import CONTEXT_MESSAGES, MEMORY_PATH
+from mlaude.config import CONTEXT_MESSAGES, KNOWLEDGE_DIR, KNOWLEDGE_TEMPLATES_DIR, MEMORY_PATH
 from mlaude.llm import OllamaProvider, load_system_prompt
 from mlaude.memory import ensure_memory, load_memory, overwrite_memory
 from mlaude.observer import RagChunk, RagRecord, RequestTrace
 from mlaude.rag import KnowledgeBase
-from mlaude.tools import UpdateMemoryTool, WebSearchTool
+from mlaude.tools import DeleteMemoryFactTool, UpdateMemoryTool, WebSearchTool
 from mlaude.tools_base import ToolEvent, ToolRegistry
 
 logger = logging.getLogger("mlaude")
 
 STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "static"
+
+
+def _copy_knowledge_templates() -> int:
+    """Copy knowledge template files to KNOWLEDGE_DIR if they don't already exist.
+
+    Never overwrites user-edited files — only copies files that are absent.
+    Returns count of files copied.
+    """
+    if not KNOWLEDGE_TEMPLATES_DIR.exists():
+        return 0
+
+    copied = 0
+    for src in KNOWLEDGE_TEMPLATES_DIR.rglob("*.md"):
+        relative = src.relative_to(KNOWLEDGE_TEMPLATES_DIR)
+        dest = KNOWLEDGE_DIR / relative
+        if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(src.read_text())
+            copied += 1
+
+    if copied:
+        logger.info("Copied %d knowledge template(s) to %s", copied, KNOWLEDGE_DIR)
+    return copied
 
 
 @asynccontextmanager
@@ -31,9 +54,11 @@ async def lifespan(app: FastAPI):
     registry = ToolRegistry()
     registry.register(WebSearchTool())
     registry.register(UpdateMemoryTool())
+    registry.register(DeleteMemoryFactTool())
     app.state.registry = registry
 
     ensure_memory()
+    _copy_knowledge_templates()
 
     kb = KnowledgeBase()
     chunk_count = kb.index_all()
@@ -135,12 +160,27 @@ async def websocket_endpoint(ws: WebSocket):
                 # --- RAG retrieval ---
                 rag_chunks: list[dict] = []
                 if kb.collection.count() > 0:
+                    # Build conversation context from last 2 turns for better retrieval
+                    recent_turns = [
+                        m["content"] for m in llm_messages[-4:]
+                        if m["role"] in ("user", "assistant")
+                    ]
+                    conv_ctx = " ".join(recent_turns[-2:]) if len(recent_turns) >= 2 else None
+
                     rag_start = time.monotonic()
-                    rag_chunks = kb.query(content, n=5)
+                    rag_chunks = kb.query_v2(content, conversation_context=conv_ctx)
                     rag_ms = int((time.monotonic() - rag_start) * 1000)
                     trace.rag = RagRecord(
                         query=content,
-                        chunks=[RagChunk(text=c["text"], source=c["source"], score=c["score"]) for c in rag_chunks],
+                        chunks=[
+                            RagChunk(
+                                text=c["text"],
+                                source=c["source"],
+                                source_type=c.get("source_type", "general"),
+                                score=c["score"],
+                            )
+                            for c in rag_chunks
+                        ],
                         duration_ms=rag_ms,
                     )
 

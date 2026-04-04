@@ -1,6 +1,6 @@
 """Built-in tools for Mlaude."""
 
-from mlaude.tools.memory_tool import UpdateMemoryTool
+from mlaude.tools.memory_tool import DeleteMemoryFactTool, UpdateMemoryTool
 from mlaude.tools.search import WebSearchTool
 
 # Re-export base types for convenience
@@ -13,4 +13,5 @@ __all__ = [
     "ToolResult",
     "WebSearchTool",
     "UpdateMemoryTool",
+    "DeleteMemoryFactTool",
 ]

@@ -2,6 +2,7 @@
 
 import datetime
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 
@@ -13,23 +14,63 @@ from mlaude.tools_base import ToolEvent, ToolRegistry
 logger = logging.getLogger("mlaude")
 
 
+def _memory_has_content(memory_text: str) -> bool:
+    """Return True if MEMORY.md has at least one bullet fact (not just empty section headers)."""
+    return bool(re.search(r"^- .+", memory_text, re.MULTILINE))
+
+
 def load_system_prompt(rag_context: list[dict] | None = None) -> str:
+    """Build the system prompt with hierarchical, source-type-aware injection.
+
+    Section order (highest → lowest priority in context window):
+      1. SOUL.md — core identity and behavioral rules (always present)
+      2. About you — chunks tagged source_type "about" or "behavior"
+      3. Your interest context — chunks tagged source_type "interest"
+      4. Your memory — persistent facts from MEMORY.md (only if non-empty)
+      5. Relevant knowledge — general knowledge chunks
+      6. Datetime
+
+    Behavioral and interest context appears before memory and factual knowledge
+    so the LLM applies the right behavioral lens before processing other context.
+    """
     soul = SOUL_PATH.read_text() if SOUL_PATH.exists() else "You are a helpful assistant."
     now = datetime.datetime.now().strftime("%A, %B %-d, %Y at %H:%M")
 
     parts = [soul.strip()]
 
-    # Inject memory
+    # Split RAG chunks by source type (dicts may or may not carry source_type)
+    about_chunks: list[str] = []
+    interest_chunks: list[str] = []
+    general_chunks: list[str] = []
+
+    if rag_context:
+        for c in rag_context:
+            text = c["text"] if isinstance(c, dict) else c
+            stype = c.get("source_type", "general") if isinstance(c, dict) else "general"
+            if stype in ("about", "behavior"):
+                about_chunks.append(text)
+            elif stype == "interest":
+                interest_chunks.append(text)
+            else:
+                general_chunks.append(text)
+
+    # About/behavior context — inject first (shapes how to read everything else)
+    if about_chunks:
+        parts.append("--- Context About You ---\n" + "\n\n".join(about_chunks))
+
+    # Interest context — inject before memory
+    if interest_chunks:
+        parts.append("--- Your Interest Context ---\n" + "\n\n".join(interest_chunks))
+
+    # Memory — only inject if it has actual facts, not just empty section headers
     if MEMORY_PATH.exists():
         memory = MEMORY_PATH.read_text().strip()
-        if memory:
-            parts.append(f"--- Your Memory ---\n{memory}")
+        if memory and _memory_has_content(memory):
+            parts.append(f"--- About You (Your Memory) ---\n{memory}")
 
-    # Inject RAG context (list of dicts with text/source/score, or plain strings)
-    if rag_context:
-        texts = [c["text"] if isinstance(c, dict) else c for c in rag_context]
-        chunks = "\n\n".join(texts)
-        parts.append(f"--- Relevant Knowledge ---\n{chunks}")
+    # General knowledge — inject last of the context sections
+    if general_chunks:
+        parts.append("--- Relevant Knowledge ---\n" + "\n\n".join(general_chunks))
 
     parts.append(f"Current date and time: {now}")
     return "\n\n".join(parts)
@@ -112,9 +153,11 @@ class OllamaProvider:
                         error=result.error,
                         duration_ms=tool_ms,
                     ))
-                    # Capture memory writes from update_memory tool
+                    # Capture memory writes/deletions
                     if name == "update_memory" and not result.error:
                         trace.memory_writes.append(result.output)
+                    elif name == "delete_memory_fact" and not result.error:
+                        trace.memory_writes.append(f"[deleted] {result.output}")
 
                 yield ToolEvent(phase="done", tool_name=name, tool_input=args, tool_output=result.output)
                 all_messages.append({"role": "tool", "content": result.output})
