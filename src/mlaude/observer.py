@@ -129,6 +129,12 @@ class RequestTrace:
                     )
                     break
 
+    def _rag_tokens(self) -> int:
+        """Approximate token count for all RAG chunks."""
+        if not self.rag:
+            return 0
+        return sum(len(c.text) // 4 for c in self.rag.chunks)
+
     def log(self) -> None:
         """Append trace as a JSON line to the daily log file."""
         try:
@@ -139,6 +145,7 @@ class RequestTrace:
                 "ts": datetime.now().isoformat(),
                 "request_id": self.request_id,
                 "session_id": self.session_id,
+                "system_prompt_tokens": self.system_prompt_tokens,
                 "context_tokens": self.context_tokens,
                 "context_pct": self.context_pct,
                 "history_messages": self.history_messages,
@@ -148,13 +155,24 @@ class RequestTrace:
                     "query": self.rag.query,
                     "count": self.rag.count,
                     "duration_ms": self.rag.duration_ms,
+                    "rag_tokens": self._rag_tokens(),
                     "sources": [c.source for c in self.rag.chunks],
                     "scores": [round(c.score, 4) for c in self.rag.chunks],
+                    "chunks": [
+                        {
+                            "source": c.source,
+                            "source_type": c.source_type,
+                            "score": round(c.score, 4),
+                            "preview": c.text[:120],
+                        }
+                        for c in self.rag.chunks
+                    ],
                 } if self.rag else None,
                 "tool_calls": [
                     {
                         "name": tc.name,
                         "args": tc.args,
+                        "result_preview": tc.result[:300] if tc.result else "",
                         "duration_ms": tc.duration_ms,
                         "error": tc.error,
                     }
@@ -173,6 +191,9 @@ class RequestTrace:
     def to_ws_payload(self) -> dict:
         """Serialize for sending over WebSocket."""
         return {
+            "request_id": self.request_id,
+            "session_id": self.session_id,
+            "system_prompt_tokens": self.system_prompt_tokens,
             "context_tokens": self.context_tokens,
             "context_pct": self.context_pct,
             "context_limit": CONTEXT_LIMIT,
@@ -183,6 +204,7 @@ class RequestTrace:
                 "query": self.rag.query,
                 "count": self.rag.count,
                 "duration_ms": self.rag.duration_ms,
+                "rag_tokens": self._rag_tokens(),
                 "chunks": [
                     {
                         "source": c.source,
@@ -197,6 +219,7 @@ class RequestTrace:
                 {
                     "name": tc.name,
                     "args": tc.args,
+                    "result_preview": tc.result[:300] if tc.result else "",
                     "duration_ms": tc.duration_ms,
                     "error": tc.error,
                 }

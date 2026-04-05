@@ -52,7 +52,7 @@ class WebSearchTool(Tool):
 
     async def _ddg(self, query: str) -> list[dict]:
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
 
             loop = asyncio.get_event_loop()
             results = await loop.run_in_executor(

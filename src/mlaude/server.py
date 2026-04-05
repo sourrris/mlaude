@@ -11,10 +11,20 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from mlaude import db
-from mlaude.config import CONTEXT_MESSAGES, KNOWLEDGE_DIR, KNOWLEDGE_TEMPLATES_DIR, MEMORY_PATH
+from mlaude.config import (
+    CHROMADB_DIR,
+    CONTEXT_MESSAGES,
+    EMBEDDING_MODEL,
+    KNOWLEDGE_DIR,
+    KNOWLEDGE_TEMPLATES_DIR,
+    MEMORY_PATH,
+    MLAUDE_HOME,
+    OLLAMA_MODEL,
+    OLLAMA_URL,
+)
 from mlaude.llm import OllamaProvider, load_system_prompt
 from mlaude.memory import ensure_memory, load_memory, overwrite_memory
-from mlaude.observer import RagChunk, RagRecord, RequestTrace
+from mlaude.observer import CONTEXT_LIMIT, LOGS_DIR, RagChunk, RagRecord, RequestTrace
 from mlaude.rag import KnowledgeBase
 from mlaude.tools import DeleteMemoryFactTool, UpdateMemoryTool, WebSearchTool
 from mlaude.tools_base import ToolEvent, ToolRegistry
@@ -67,6 +77,161 @@ async def lifespan(app: FastAPI):
     app.state.kb = kb
 
     yield
+
+
+def _available_trace_dates() -> list[str]:
+    """Return sorted list of dates with trace files (newest first)."""
+    if not LOGS_DIR.exists():
+        return []
+    dates = []
+    for f in LOGS_DIR.glob("trace-*.jsonl"):
+        date_str = f.stem.replace("trace-", "")
+        dates.append(date_str)
+    return sorted(dates, reverse=True)
+
+
+def _load_traces(date: str, limit: int) -> dict:
+    """Load traces from JSONL log file for a given date."""
+    dates = _available_trace_dates()
+    if not date and dates:
+        date = dates[0]
+
+    traces: list[dict] = []
+    log_path = LOGS_DIR / f"trace-{date}.jsonl"
+    if log_path.exists():
+        lines = log_path.read_text().strip().splitlines()
+        # Read newest first
+        for line in reversed(lines[-limit:]):
+            try:
+                traces.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    return {
+        "type": "traces",
+        "date": date,
+        "dates_available": dates,
+        "traces": traces,
+        "total": len(traces),
+    }
+
+
+def _chromadb_stats(kb: KnowledgeBase) -> dict:
+    """Get ChromaDB collection stats."""
+    chunk_count = kb.collection.count()
+    knowledge_files: list[dict] = []
+    if KNOWLEDGE_DIR.exists():
+        for p in sorted(KNOWLEDGE_DIR.rglob("*.md")):
+            relative = str(p.relative_to(KNOWLEDGE_DIR))
+            parts = Path(relative).parts
+            top = parts[0].lower() if parts else ""
+            if top == "about":
+                stype = "about"
+            elif top in ("interests", "interest"):
+                stype = "interest"
+            elif top in ("behavior", "behaviour"):
+                stype = "behavior"
+            else:
+                stype = "general"
+            knowledge_files.append({"path": relative, "source_type": stype})
+
+    return {
+        "type": "chromadb_stats",
+        "collection_name": "knowledge",
+        "chunk_count": chunk_count,
+        "knowledge_files": knowledge_files,
+        "knowledge_dir": str(KNOWLEDGE_DIR),
+        "chromadb_dir": str(CHROMADB_DIR),
+    }
+
+
+def _system_info() -> dict:
+    """Get system configuration info."""
+    memory_size = 0
+    memory_tokens = 0
+    if MEMORY_PATH.exists():
+        memory_size = MEMORY_PATH.stat().st_size
+        memory_tokens = memory_size // 4
+
+    knowledge_count = len(list(KNOWLEDGE_DIR.rglob("*.md"))) if KNOWLEDGE_DIR.exists() else 0
+
+    return {
+        "type": "system_info",
+        "model": OLLAMA_MODEL,
+        "embedding_model": EMBEDDING_MODEL,
+        "context_limit": CONTEXT_LIMIT,
+        "ollama_url": OLLAMA_URL,
+        "memory_path": str(MEMORY_PATH),
+        "memory_size_bytes": memory_size,
+        "memory_tokens_approx": memory_tokens,
+        "knowledge_dir": str(KNOWLEDGE_DIR),
+        "knowledge_file_count": knowledge_count,
+        "mlaude_home": str(MLAUDE_HOME),
+    }
+
+
+def _aggregate_stats(days: int) -> dict:
+    """Aggregate metrics from recent trace files."""
+    dates = _available_trace_dates()[:days]
+    all_traces: list[dict] = []
+
+    for date in dates:
+        log_path = LOGS_DIR / f"trace-{date}.jsonl"
+        if log_path.exists():
+            for line in log_path.read_text().strip().splitlines():
+                try:
+                    all_traces.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+    if not all_traces:
+        return {"type": "diag_stats", "request_count": 0}
+
+    total_ms_vals = [t.get("total_ms", 0) for t in all_traces]
+    first_token_vals = [t.get("first_token_ms", 0) for t in all_traces]
+    context_pct_vals = [t.get("context_pct", 0) for t in all_traces]
+
+    # Tool call frequency
+    tool_counts: dict[str, int] = {}
+    for t in all_traces:
+        for tc in t.get("tool_calls", []):
+            name = tc.get("name", "unknown")
+            tool_counts[name] = tool_counts.get(name, 0) + 1
+
+    # Warning frequency
+    warning_count = sum(len(t.get("warnings", [])) for t in all_traces)
+
+    # RAG stats
+    rag_durations = [t["rag"]["duration_ms"] for t in all_traces if t.get("rag")]
+    rag_chunk_counts = [t["rag"]["count"] for t in all_traces if t.get("rag")]
+
+    # Latency buckets
+    buckets = {"<1s": 0, "1-5s": 0, "5-15s": 0, "15-30s": 0, ">30s": 0}
+    for ms in total_ms_vals:
+        if ms < 1000:
+            buckets["<1s"] += 1
+        elif ms < 5000:
+            buckets["1-5s"] += 1
+        elif ms < 15000:
+            buckets["5-15s"] += 1
+        elif ms < 30000:
+            buckets["15-30s"] += 1
+        else:
+            buckets[">30s"] += 1
+
+    n = len(all_traces)
+    return {
+        "type": "diag_stats",
+        "request_count": n,
+        "avg_total_ms": sum(total_ms_vals) // n,
+        "avg_first_token_ms": sum(first_token_vals) // n,
+        "avg_context_pct": sum(context_pct_vals) // n,
+        "tool_call_counts": tool_counts,
+        "warning_count": warning_count,
+        "rag_avg_duration_ms": sum(rag_durations) // len(rag_durations) if rag_durations else 0,
+        "rag_avg_chunks": round(sum(rag_chunk_counts) / len(rag_chunk_counts), 1) if rag_chunk_counts else 0,
+        "latency_buckets": buckets,
+    }
 
 
 app = FastAPI(title="mlaude", lifespan=lifespan)
@@ -152,6 +317,21 @@ async def websocket_endpoint(ws: WebSocket):
             elif msg_type == "reindex":
                 chunk_count = kb.index_all()
                 await ws.send_json({"type": "reindex_done", "chunks": chunk_count})
+
+            elif msg_type == "get_traces":
+                date = msg.get("date", "")
+                limit = min(int(msg.get("limit", 100)), 500)
+                await ws.send_json(_load_traces(date, limit))
+
+            elif msg_type == "get_chromadb_stats":
+                await ws.send_json(_chromadb_stats(kb))
+
+            elif msg_type == "get_system_info":
+                await ws.send_json(_system_info())
+
+            elif msg_type == "get_diag_stats":
+                days = min(int(msg.get("days", 1)), 7)
+                await ws.send_json(_aggregate_stats(days))
 
             elif msg_type == "message":
                 session_id = msg.get("session_id", "")
