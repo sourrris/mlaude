@@ -12,7 +12,7 @@ from mlaude.config import KNOWLEDGE_DIR, MLAUDE_HOME
 logger = logging.getLogger("mlaude")
 
 LOGS_DIR = MLAUDE_HOME / "logs"
-CONTEXT_LIMIT = 32768          # qwen2.5:14b context window (tokens)
+CONTEXT_LIMIT = 32768          # qwen3.5:9b context window (tokens)
 CONTEXT_WARN_PCT = 80          # warn above this %
 CONTEXT_CRIT_PCT = 90          # critical above this %
 

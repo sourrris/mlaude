@@ -13,6 +13,11 @@ export interface Message {
   created_at?: string;
 }
 
+export interface ModelsMessage {
+  type: "models";
+  models: string[];
+}
+
 export interface RagChunk {
   source: string;
   source_type: "about" | "interest" | "behavior" | "general";

@@ -27,6 +27,8 @@ export function useChat() {
   const [trace, setTrace] = useState<Trace | null>(null);
   const [activeToolName, setActiveToolName] = useState<string | null>(null);
   const [memoryContent, setMemoryContent] = useState<string | null>(null);
+  const [models, setModels] = useState<string[]>([]);
+  const [currentModel, setCurrentModel] = useState<string>("qwen3.5:9b");
 
   const send = useCallback((payload: Record<string, unknown>) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
@@ -44,6 +46,8 @@ export function useChat() {
     socket.onopen = () => {
       setStatus("connected");
       send({ type: "list_sessions" });
+      send({ type: "get_system_info" }); // This will give us the current model
+      send({ type: "get_models" }); // This will give us the list of available models
     };
 
     socket.onclose = () => {
@@ -90,14 +94,18 @@ export function useChat() {
           break;
 
         case "thinking_token":
-          thinkingAccRef.current += (msg.content as string);
+          const content = msg.content as string;
+          console.log("FRONTEND THINKING TOKEN RECEIVED:", content);
+          thinkingAccRef.current += content;
           setThinkingContent(thinkingAccRef.current);
           break;
 
         case "thinking_done":
           setStreamingThinking(false);
           if (thinkingStartRef.current !== null) {
-            setThinkingDuration(Math.round((Date.now() - thinkingStartRef.current) / 1000));
+            setThinkingDuration(
+              Math.round((Date.now() - thinkingStartRef.current) / 1000),
+            );
             thinkingStartRef.current = null;
           }
           break;
@@ -112,6 +120,7 @@ export function useChat() {
           setStreamingContent((prev) => {
             if (prev) {
               const thinking = thinkingAccRef.current || undefined;
+              console.log("FINAL THINKING CONTENT:", thinkingAccRef.current);
               setMessages((msgs) => [
                 ...msgs,
                 { role: "assistant", content: prev, thinking },
@@ -143,19 +152,27 @@ export function useChat() {
             prev.map((s) =>
               s.id === (msg.session_id as string)
                 ? { ...s, title: msg.title as string }
-                : s
-            )
+                : s,
+            ),
           );
           break;
 
         case "session_deleted":
           setSessions((prev) =>
-            prev.filter((s) => s.id !== (msg.session_id as string))
+            prev.filter((s) => s.id !== (msg.session_id as string)),
           );
           if (activeSessionId === (msg.session_id as string)) {
             setActiveSessionId(null);
             setMessages([]);
             setTrace(null);
+          }
+          break;
+
+        case "models":
+          setModels(msg.models as string[]);
+          // Set current model to first available if none set or if current not in list
+          if (models.length === 0 || !models.includes(currentModel)) {
+            setCurrentModel(msg.models[0] || "qwen3.5:9b");
           }
           break;
 
@@ -169,6 +186,17 @@ export function useChat() {
 
         case "reindex_done":
           // Could surface this in UI — for now just ignore
+          break;
+
+        case "models":
+          if (msg && typeof msg === "object" && "models" in msg) {
+            const modelsArray = (msg as { models: string[] }).models;
+            setModels(modelsArray);
+            // Set current model to first available if none set or if current not in list
+            if (models.length === 0 || !models.includes(currentModel)) {
+              setCurrentModel(modelsArray[0] || "qwen3.5:9b");
+            }
+          }
           break;
 
         case "error":
@@ -215,14 +243,14 @@ export function useChat() {
       setActiveToolName(null);
       send({ type: "load_session", session_id: id });
     },
-    [send]
+    [send],
   );
 
   const deleteSession = useCallback(
     (id: string) => {
       send({ type: "delete_session", session_id: id });
     },
-    [send]
+    [send],
   );
 
   const sendMessage = useCallback(
@@ -234,7 +262,7 @@ export function useChat() {
       setStreaming(true);
       send({ type: "message", session_id: sid, content });
     },
-    [send, activeSessionId, streaming]
+    [send, activeSessionId, streaming],
   );
 
   const reindex = useCallback(() => {
@@ -245,9 +273,12 @@ export function useChat() {
     send({ type: "get_memory" });
   }, [send]);
 
-  const saveMemory = useCallback((content: string) => {
-    send({ type: "update_memory_raw", content });
-  }, [send]);
+  const saveMemory = useCallback(
+    (content: string) => {
+      send({ type: "update_memory_raw", content });
+    },
+    [send],
+  );
 
   return {
     status,
@@ -269,5 +300,8 @@ export function useChat() {
     memoryContent,
     loadMemory,
     saveMemory,
+    models,
+    currentModel,
+    setCurrentModel,
   };
 }

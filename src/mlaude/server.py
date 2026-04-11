@@ -153,7 +153,9 @@ def _system_info() -> dict:
         memory_size = MEMORY_PATH.stat().st_size
         memory_tokens = memory_size // 4
 
-    knowledge_count = len(list(KNOWLEDGE_DIR.rglob("*.md"))) if KNOWLEDGE_DIR.exists() else 0
+    knowledge_count = (
+        len(list(KNOWLEDGE_DIR.rglob("*.md"))) if KNOWLEDGE_DIR.exists() else 0
+    )
 
     return {
         "type": "system_info",
@@ -228,8 +230,12 @@ def _aggregate_stats(days: int) -> dict:
         "avg_context_pct": sum(context_pct_vals) // n,
         "tool_call_counts": tool_counts,
         "warning_count": warning_count,
-        "rag_avg_duration_ms": sum(rag_durations) // len(rag_durations) if rag_durations else 0,
-        "rag_avg_chunks": round(sum(rag_chunk_counts) / len(rag_chunk_counts), 1) if rag_chunk_counts else 0,
+        "rag_avg_duration_ms": sum(rag_durations) // len(rag_durations)
+        if rag_durations
+        else 0,
+        "rag_avg_chunks": round(sum(rag_chunk_counts) / len(rag_chunk_counts), 1)
+        if rag_chunk_counts
+        else 0,
         "latency_buckets": buckets,
     }
 
@@ -254,6 +260,7 @@ async def spa_fallback(path: str):
     # Don't intercept API or WebSocket routes
     if path.startswith("api/") or path.startswith("static/") or path.startswith("ws"):
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404)
     return FileResponse(STATIC_DIR / "index.html")
 
@@ -286,7 +293,9 @@ async def websocket_endpoint(ws: WebSocket):
 
             if msg_type == "new_session":
                 session_id = await db.create_session()
-                await ws.send_json({"type": "session_created", "session_id": session_id})
+                await ws.send_json(
+                    {"type": "session_created", "session_id": session_id}
+                )
 
             elif msg_type == "list_sessions":
                 sessions = await db.list_sessions()
@@ -295,15 +304,21 @@ async def websocket_endpoint(ws: WebSocket):
             elif msg_type == "load_session":
                 session_id = msg.get("session_id", "")
                 if not await db.session_exists(session_id):
-                    await ws.send_json({"type": "error", "content": "Session not found"})
+                    await ws.send_json(
+                        {"type": "error", "content": "Session not found"}
+                    )
                     continue
                 messages = await db.get_messages(session_id)
-                await ws.send_json({"type": "history", "session_id": session_id, "messages": messages})
+                await ws.send_json(
+                    {"type": "history", "session_id": session_id, "messages": messages}
+                )
 
             elif msg_type == "delete_session":
                 session_id = msg.get("session_id", "")
                 await db.delete_session(session_id)
-                await ws.send_json({"type": "session_deleted", "session_id": session_id})
+                await ws.send_json(
+                    {"type": "session_deleted", "session_id": session_id}
+                )
 
             elif msg_type == "get_memory":
                 content = load_memory()
@@ -341,12 +356,16 @@ async def websocket_endpoint(ws: WebSocket):
 
                 if not session_id or not await db.session_exists(session_id):
                     session_id = await db.create_session()
-                    await ws.send_json({"type": "session_created", "session_id": session_id})
+                    await ws.send_json(
+                        {"type": "session_created", "session_id": session_id}
+                    )
 
                 await db.add_message(session_id, "user", content)
 
                 history = await db.get_messages(session_id, limit=CONTEXT_MESSAGES)
-                llm_messages = [{"role": m["role"], "content": m["content"]} for m in history]
+                llm_messages = [
+                    {"role": m["role"], "content": m["content"]} for m in history
+                ]
 
                 # --- Build trace ---
                 trace = RequestTrace(session_id=session_id)
@@ -357,10 +376,13 @@ async def websocket_endpoint(ws: WebSocket):
                 if kb.collection.count() > 0:
                     # Build conversation context from last 2 turns for better retrieval
                     recent_turns = [
-                        m["content"] for m in llm_messages[-4:]
+                        m["content"]
+                        for m in llm_messages[-4:]
                         if m["role"] in ("user", "assistant")
                     ]
-                    conv_ctx = " ".join(recent_turns[-2:]) if len(recent_turns) >= 2 else None
+                    conv_ctx = (
+                        " ".join(recent_turns[-2:]) if len(recent_turns) >= 2 else None
+                    )
 
                     rag_start = time.monotonic()
                     rag_chunks = kb.query_v2(content, conversation_context=conv_ctx)
@@ -380,7 +402,9 @@ async def websocket_endpoint(ws: WebSocket):
                     )
 
                 # --- System prompt ---
-                system = load_system_prompt(rag_context=rag_chunks if rag_chunks else None)
+                system = load_system_prompt(
+                    rag_context=rag_chunks if rag_chunks else None
+                )
 
                 # --- Token estimates for trace ---
                 system_chars = len(system)
@@ -400,14 +424,18 @@ async def websocket_endpoint(ws: WebSocket):
                 buf = ""
 
                 try:
-                    async for event in llm.stream_with_tools(system, llm_messages, registry, trace=trace):
+                    async for event in llm.stream_with_tools(
+                        system, llm_messages, registry, trace=trace
+                    ):
                         if isinstance(event, ToolEvent):
-                            await ws.send_json({
-                                "type": f"tool_{event.phase}",
-                                "tool": event.tool_name,
-                                "input": event.tool_input,
-                                "output": event.tool_output,
-                            })
+                            await ws.send_json(
+                                {
+                                    "type": f"tool_{event.phase}",
+                                    "tool": event.tool_name,
+                                    "input": event.tool_input,
+                                    "output": event.tool_output,
+                                }
+                            )
                             continue
 
                         buf += event
@@ -419,8 +447,10 @@ async def websocket_endpoint(ws: WebSocket):
                                     pre = buf[: buf.index(THINK_OPEN)]
                                     if pre:
                                         full_response += pre
-                                        await ws.send_json({"type": "token", "content": pre})
-                                    buf = buf[buf.index(THINK_OPEN) + len(THINK_OPEN):]
+                                        await ws.send_json(
+                                            {"type": "token", "content": pre}
+                                        )
+                                    buf = buf[buf.index(THINK_OPEN) + len(THINK_OPEN) :]
                                     in_thinking = True
                                     await ws.send_json({"type": "thinking_start"})
                                 else:
@@ -428,7 +458,9 @@ async def websocket_endpoint(ws: WebSocket):
                                     safe = max(0, len(buf) - len(THINK_OPEN) + 1)
                                     if safe > 0:
                                         full_response += buf[:safe]
-                                        await ws.send_json({"type": "token", "content": buf[:safe]})
+                                        await ws.send_json(
+                                            {"type": "token", "content": buf[:safe]}
+                                        )
                                         buf = buf[safe:]
                                     break
                             else:
@@ -436,26 +468,39 @@ async def websocket_endpoint(ws: WebSocket):
                                     chunk = buf[: buf.index(THINK_CLOSE)]
                                     if chunk:
                                         full_thinking += chunk
-                                        await ws.send_json({"type": "thinking_token", "content": chunk})
-                                    buf = buf[buf.index(THINK_CLOSE) + len(THINK_CLOSE):]
+                                        print(f"BACKEND THINKING TOKEN: '{chunk}'")
+                                        await ws.send_json(
+                                            {"type": "thinking_token", "content": chunk}
+                                        )
+                                    buf = buf[
+                                        buf.index(THINK_CLOSE) + len(THINK_CLOSE) :
+                                    ]
                                     in_thinking = False
                                     await ws.send_json({"type": "thinking_done"})
                                 else:
                                     safe = max(0, len(buf) - len(THINK_CLOSE) + 1)
                                     if safe > 0:
                                         full_thinking += buf[:safe]
-                                        await ws.send_json({"type": "thinking_token", "content": buf[:safe]})
+                                        await ws.send_json(
+                                            {
+                                                "type": "thinking_token",
+                                                "content": buf[:safe],
+                                            }
+                                        )
                                         buf = buf[safe:]
                                     break
 
-                    # Flush any remaining buffer
-                    if buf.strip():
-                        if in_thinking:
-                            full_thinking += buf
-                            await ws.send_json({"type": "thinking_token", "content": buf})
-                        else:
-                            full_response += buf
-                            await ws.send_json({"type": "token", "content": buf})
+                        # Flush any remaining buffer
+                        if buf.strip():
+                            if in_thinking:
+                                full_thinking += buf
+                                print(f"BACKEND FINAL THINKING BUF: '{buf}'")
+                                await ws.send_json(
+                                    {"type": "thinking_token", "content": buf}
+                                )
+                            else:
+                                full_response += buf
+                                await ws.send_json({"type": "token", "content": buf})
 
                 except Exception as e:
                     logger.exception("LLM streaming error")
@@ -478,7 +523,13 @@ async def websocket_endpoint(ws: WebSocket):
                     try:
                         title = await llm.generate_title(content, full_response)
                         await db.update_session_title(session_id, title)
-                        await ws.send_json({"type": "title_updated", "session_id": session_id, "title": title})
+                        await ws.send_json(
+                            {
+                                "type": "title_updated",
+                                "session_id": session_id,
+                                "title": title,
+                            }
+                        )
                     except Exception:
                         pass
 

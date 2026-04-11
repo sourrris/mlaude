@@ -29,6 +29,9 @@ export default function App() {
     memoryContent,
     loadMemory,
     saveMemory,
+    models,
+    currentModel,
+    setCurrentModel,
   } = useChat();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -65,14 +68,19 @@ export default function App() {
 
       {/* Main chat area — stable single layout, no conditional branch */}
       <main className="flex-1 flex flex-col min-w-0 bg-white relative rounded-tl-2xl shadow-sm border-t border-l border-black/5 z-10">
-        <TopBar
-          title={activeSession?.title ?? null}
-          status={status}
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={() => setSidebarOpen((v) => !v)}
-          trace={trace}
-          onOpenTrace={() => setTraceOpen(true)}
-        />
+       <TopBar
+         title={activeSession?.title ?? null}
+         status={status}
+         sidebarOpen={sidebarOpen}
+         onToggleSidebar={() => setSidebarOpen((v) => !v)}
+         trace={trace}
+         onOpenTrace={() => setTraceOpen(true)}
+         models={models}
+         currentModel={currentModel}
+         onModelChange={(model: string) => {
+           setCurrentModel(model);
+         }}
+       />
 
         {/* Message area + input — stable flex column */}
         <div className="flex-1 flex flex-col min-h-0">
