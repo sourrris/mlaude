@@ -9,7 +9,7 @@ MEMORY_PATH = MLAUDE_HOME / "MEMORY.md"
 KNOWLEDGE_DIR = MLAUDE_HOME / "knowledge"
 CHROMADB_DIR = MLAUDE_HOME / "chromadb"
 
-OLLAMA_MODEL = "qwen2.5:14b-instruct-q4_K_M"
+OLLAMA_MODEL = "qwen3.5:9b"
 OLLAMA_URL = "http://localhost:11434"
 EMBEDDING_MODEL = "nomic-embed-text"
 

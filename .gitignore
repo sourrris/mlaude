@@ -13,3 +13,4 @@ mlaude-v0.1-plan.md
 frontend/node_modules/
 frontend/dist/
 static/assets/
+static/index.html

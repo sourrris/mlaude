@@ -72,6 +72,7 @@ import {
   RefreshCw,
   BrainCircuit,
   ChevronsUpDown,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Session } from "@/types";
@@ -230,6 +231,12 @@ export function SessionSidebar({
           label="Reindex knowledge"
           onClick={onReindex}
           hoverAnim={{ rotate: 180 }}
+        />
+        <NavRow
+          icon={<Activity {...ico} />}
+          label="Diagnostics"
+          onClick={() => window.location.href = "/diagnostics"}
+          hoverAnim={{ scale: 1.15 }}
         />
 
         {/* ─── Commented: Search & Customize ──────────────────────────
