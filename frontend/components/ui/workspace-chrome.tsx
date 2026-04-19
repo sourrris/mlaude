@@ -1,7 +1,7 @@
 "use client";
 
 import { useDeferredValue, useEffect, useState, startTransition } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Menu } from "lucide-react";
 
 import { createSession, listSessions } from "@/lib/api";
@@ -21,6 +21,7 @@ export function WorkspaceChrome({
 }: WorkspaceChromeProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [sessions, setSessions] = useState<WorkspaceSession[]>([]);
   const [query, setQuery] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -57,15 +58,19 @@ export function WorkspaceChrome({
   async function handleNewSession() {
     const session = await createSession();
     window.dispatchEvent(new Event("mlaude:sessions-changed"));
+    const modeSuffix =
+      pathname === "/" && searchParams.get("mode") === "runs" ? "&mode=runs" : "";
     startTransition(() => {
-      router.push(`/?session=${session.id}`);
+      router.push(`/?session=${session.id}${modeSuffix}`);
     });
     setSidebarOpen(false);
   }
 
   function handleSelectSession(sessionId: string) {
+    const modeSuffix =
+      pathname === "/" && searchParams.get("mode") === "runs" ? "&mode=runs" : "";
     startTransition(() => {
-      router.push(`/?session=${sessionId}`);
+      router.push(`/?session=${sessionId}${modeSuffix}`);
     });
     setSidebarOpen(false);
   }

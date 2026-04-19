@@ -19,3 +19,4 @@ frontend/test-results/
 frontend/playwright-report/
 static/assets/
 static/index.html
+knowledge/about/master.md

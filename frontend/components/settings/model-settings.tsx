@@ -10,6 +10,7 @@ export function ModelSettingsPanel() {
   const [form, setForm] = useState<ModelSettings>({
     ollama_base_url: "http://127.0.0.1:11434",
     default_chat_model: "",
+    default_embedding_model: "nomic-embed-text",
     temperature: 0.2,
   });
   const [models, setModels] = useState<string[]>([]);
@@ -35,7 +36,9 @@ export function ModelSettingsPanel() {
           setModels(discoveredModels);
           setHealth(
             response.health.running
-              ? `Connected. ${discoveredModels.length} model(s) discovered.`
+              ? response.health.embedding_model_available
+                ? `Connected. ${discoveredModels.length} model(s) discovered.`
+                : `Connected, but ${response.settings.default_embedding_model} is not available locally.`
               : response.health.error || "Ollama is unavailable."
           );
         }
@@ -68,7 +71,9 @@ export function ModelSettingsPanel() {
       setModels(discoveredModels);
       setHealth(
         response.health.running
-          ? `Connected. ${discoveredModels.length} model(s) discovered.`
+          ? response.health.embedding_model_available
+            ? `Connected. ${discoveredModels.length} model(s) discovered.`
+            : `Connected, but ${response.settings.default_embedding_model} is not available locally.`
           : response.health.error || "Ollama is unavailable."
       );
     } finally {
@@ -88,7 +93,7 @@ export function ModelSettingsPanel() {
           </h1>
           <p className="mt-3 text-sm leading-7 text-[color:var(--text-soft)]">
             This workspace only exposes local Ollama runtime settings. Model discovery,
-            fallback handling, and the default composer model all live here.
+            fallback handling, and the default chat and embedding models all live here.
           </p>
         </div>
 
@@ -124,6 +129,29 @@ export function ModelSettingsPanel() {
                     }))
                   }
                   data-testid="settings-model-select"
+                  className="rounded-2xl border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] px-4 py-3 outline-none"
+                >
+                  {models.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="grid gap-2">
+                <span className="text-xs uppercase tracking-[0.16em] text-[color:var(--text-faint)]">
+                  Default Embedding Model
+                </span>
+                <select
+                  value={form.default_embedding_model}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      default_embedding_model: event.target.value,
+                    }))
+                  }
+                  data-testid="settings-embedding-model-select"
                   className="rounded-2xl border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] px-4 py-3 outline-none"
                 >
                   {models.map((model) => (
@@ -183,6 +211,11 @@ export function ModelSettingsPanel() {
             </p>
             <p className="mt-3 text-sm leading-7 text-[color:var(--text-soft)]">
               {loading ? "Loading runtime…" : health}
+            </p>
+            <p className="mt-3 text-xs uppercase tracking-[0.16em] text-[color:var(--text-faint)]">
+              {form.default_embedding_model
+                ? `Embedding model: ${form.default_embedding_model}`
+                : "No embedding model selected"}
             </p>
 
             <div className="mt-6 space-y-2">

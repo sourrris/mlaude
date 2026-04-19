@@ -4,6 +4,11 @@ export type PacketType =
   | "message_end"
   | "stop"
   | "error"
+  | "run_start"
+  | "step_start"
+  | "step_result"
+  | "run_complete"
+  | "run_error"
   | "reasoning_start"
   | "reasoning_delta"
   | "reasoning_done"
@@ -45,10 +50,15 @@ export interface SourceDocument {
   file_id: string | null;
   title: string;
   source: string;
+  source_kind?: "web_result" | "web_page" | "file_excerpt" | "python_output";
   section?: string | null;
   content: string;
   preview: string;
   score: number;
+  query?: string | null;
+  retrieval_score?: number;
+  fetched_at?: string | null;
+  extract_status?: string | null;
 }
 
 export interface CitationPacket {
@@ -57,12 +67,66 @@ export interface CitationPacket {
   document_id: string;
 }
 
+export interface RunStep {
+  id: string;
+  run_id: string;
+  step_type: string;
+  order_index: number;
+  status: "pending" | "running" | "completed" | "skipped" | "error";
+  input_payload: Record<string, unknown>;
+  output_payload: Record<string, unknown>;
+  error_text?: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface AgentRun {
+  id: string;
+  request_id: string;
+  session_id: string;
+  user_message_id: string | null;
+  assistant_message_id: string | null;
+  status: "pending" | "running" | "completed" | "stopped" | "error";
+  stop_reason?: string | null;
+  plan: string[];
+  timings: Record<string, unknown>;
+  artifacts: Record<string, unknown>;
+  meta: Record<string, unknown>;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  steps: RunStep[];
+}
+
 export type AssistantPacket =
   | {
       type: "message_start";
       id: string;
       content: string;
       final_documents?: SourceDocument[];
+    }
+  | {
+      type: "run_start";
+      run: AgentRun;
+    }
+  | {
+      type: "step_start";
+      run_id: string;
+      step: RunStep;
+    }
+  | {
+      type: "step_result";
+      run_id: string;
+      step: RunStep;
+    }
+  | {
+      type: "run_complete";
+      run: AgentRun;
+    }
+  | {
+      type: "run_error";
+      run_id: string;
+      message: string;
     }
   | {
       type: "message_delta";
@@ -158,18 +222,22 @@ export interface SessionDetailResponse {
   session: WorkspaceSession;
   messages: WorkspaceMessage[];
   files: WorkspaceFile[];
+  runs: AgentRun[];
 }
 
 export interface RuntimeHealth {
   running: boolean;
   models: string[];
   model_available: boolean;
+  embedding_model_available?: boolean;
+  default_embedding_model?: string;
   error?: string;
 }
 
 export interface ModelSettings {
   ollama_base_url: string;
   default_chat_model: string;
+  default_embedding_model: string;
   temperature: number;
 }
 

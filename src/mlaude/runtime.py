@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import TypedDict
 
 import ollama
 
@@ -10,6 +11,11 @@ from mlaude.settings import ENABLE_TEST_RUNTIME
 
 class RuntimeErrorInfo(RuntimeError):
     pass
+
+
+class ChatChunk(TypedDict):
+    content: str
+    thinking: str
 
 
 class BaseRuntime:
@@ -27,7 +33,7 @@ class BaseRuntime:
         system_prompt: str,
         messages: list[dict[str, str]],
         temperature: float,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[ChatChunk]:
         raise NotImplementedError
 
 
@@ -61,19 +67,29 @@ class OllamaRuntime(BaseRuntime):
         system_prompt: str,
         messages: list[dict[str, str]],
         temperature: float,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[ChatChunk]:
         client = ollama.AsyncClient(host=base_url)
         full_messages = [{"role": "system", "content": system_prompt}, *messages]
-        stream = await client.chat(
-            model=model,
-            messages=full_messages,
-            stream=True,
-            options={"temperature": temperature},
-        )
+        try:
+            stream = await client.chat(
+                model=model,
+                messages=full_messages,
+                stream=True,
+                think=True,
+                options={"temperature": temperature},
+            )
+        except Exception:
+            stream = await client.chat(
+                model=model,
+                messages=full_messages,
+                stream=True,
+                options={"temperature": temperature},
+            )
         async for chunk in stream:
-            token = chunk.message.content or ""
-            if token:
-                yield token
+            content = chunk.message.content or ""
+            thinking = chunk.message.thinking or ""
+            if content or thinking:
+                yield {"content": content, "thinking": thinking}
 
 
 class MockRuntime(BaseRuntime):
@@ -96,7 +112,7 @@ class MockRuntime(BaseRuntime):
         system_prompt: str,  # noqa: ARG002
         messages: list[dict[str, str]],
         temperature: float,  # noqa: ARG002
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[ChatChunk]:
         latest_message = messages[-1]["content"] if messages else ""
         if '"document": 1' in latest_message:
             response = (
@@ -117,7 +133,7 @@ class MockRuntime(BaseRuntime):
 
         for token in response.split(" "):
             await asyncio.sleep(0.01)
-            yield token + " "
+            yield {"content": token + " ", "thinking": ""}
 
 
 def build_runtime() -> BaseRuntime:

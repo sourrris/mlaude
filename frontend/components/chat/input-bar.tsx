@@ -58,15 +58,6 @@ export function ChatInputBar({
       ) : null}
 
       <div className="flex items-end gap-3">
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[color:var(--border-soft)] bg-white text-[color:var(--text-soft)] transition hover:border-[color:var(--border-strong)] hover:text-[color:var(--text-main)]"
-          aria-label="Attach files"
-        >
-          <Paperclip size={16} />
-        </button>
-
         <div className="min-w-0 flex-1 rounded-[1.5rem] border border-[color:var(--border-soft)] bg-white px-4 py-3 shadow-sm">
           <textarea
             ref={textareaRef}
@@ -87,31 +78,57 @@ export function ChatInputBar({
                 ? "Workspace unavailable"
                 : streaming
                   ? "Streaming response…"
-                  : "Ask about your local files or start a new session"
+                  : "Chat with mlaude"
             }
             className="max-h-[220px] min-h-[28px] w-full resize-none bg-transparent text-[15px] leading-7 text-[color:var(--text-main)] outline-none placeholder:text-[color:var(--text-faint)]"
           />
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <span className="text-xs uppercase tracking-[0.16em] text-[color:var(--text-faint)]">
-                Model
-              </span>
-              <select
-                value={selectedModel}
-                onChange={(event) => onModelChange(event.target.value)}
-                data-testid="composer-model-select"
-                className="rounded-full border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] px-3 py-1.5 text-sm text-[color:var(--text-main)] outline-none"
+              <button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[color:var(--border-soft)] bg-white text-[color:var(--text-soft)] transition hover:border-[color:var(--border-strong)] hover:text-[color:var(--text-main)]"
+                aria-label="Attach files"
               >
-                {models.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
-            </div>
+                <Paperclip size={16} />
+              </button>
 
-            <div className="flex items-center gap-3">
+              {models.length > 0 && (
+                <div className="relative">
+                  <select
+                    value={selectedModel}
+                    onChange={(e) => onModelChange(e.target.value)}
+                    data-testid="composer-model-select"
+                    className="h-11 appearance-none rounded-2xl border border-[color:var(--border-soft)] bg-white pl-4 pr-10 text-sm font-medium text-[color:var(--text-soft)] outline-none transition hover:border-[color:var(--border-strong)] hover:text-[color:var(--text-main)] focus:border-[color:var(--accent)]"
+                  >
+                    {models.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[color:var(--text-faint)]">
+                    <svg
+                      width="10"
+                      height="6"
+                      viewBox="0 0 10 6"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        d="M1 1L5 5L9 1"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-3">
               <p className="text-xs text-[color:var(--text-faint)]">
                 Enter to send, Shift+Enter for a new line
               </p>
@@ -129,7 +146,11 @@ export function ChatInputBar({
                 }`}
                 aria-label={streaming ? "Stop response" : "Send message"}
               >
-                {streaming ? <Square size={14} fill="currentColor" /> : <ArrowUp size={17} />}
+                {streaming ? (
+                  <Square size={14} fill="currentColor" />
+                ) : (
+                  <ArrowUp size={17} />
+                )}
               </button>
             </div>
           </div>
@@ -143,7 +164,9 @@ export function ChatInputBar({
         className="hidden"
         data-testid="composer-file-input"
         onChange={(event) => {
-          const files = event.target.files ? Array.from(event.target.files) : [];
+          const files = event.target.files
+            ? Array.from(event.target.files)
+            : [];
           if (files.length) {
             onUploadFiles(files);
             event.target.value = "";

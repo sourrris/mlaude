@@ -29,9 +29,3 @@
 - Getting to the crux of a disagreement, not the surface position
 - Questions that open up rather than close down
 - Being told when they're wrong, with a reason
-
-## [TODO: Personalize]
-
-- Add specific background details here (field, location, current work)
-- Add any recurring projects or long-term intellectual pursuits
-- Note any particular thinkers, writers, or researchers they follow

@@ -121,6 +121,8 @@ async def save_upload(
     scope: str,
     session_id: str | None,
     retrieval_index: LocalRetrievalIndex,
+    ollama_base_url: str,
+    embedding_model: str,
 ) -> StoredFile:
     ensure_app_dirs()
     file_id = new_id()
@@ -156,11 +158,13 @@ async def save_upload(
         text_path=str(text_path),
         chunk_count=0,
     )
-    record.chunk_count = retrieval_index.upsert_file(
+    record.chunk_count = await retrieval_index.upsert_file(
         file_id=record.id,
         title=record.title,
         source=record.filename,
         text=extracted,
+        base_url=ollama_base_url,
+        embedding_model=embedding_model,
     )
 
     db_session.add(record)

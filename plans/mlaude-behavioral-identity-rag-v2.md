@@ -72,7 +72,7 @@ No code changes. SOUL.md is read by `llm.py:load_system_prompt()` which does `SO
 - Visually inspect the new SOUL.md for tone consistency
 - Start `mlaude` and ask a physics question — verify response doesn't over-explain basics
 - Ask a history/politics question — verify it engages at intellectual peer level
-- `uv run mlaude` (Ollama must be running with `qwen3.5:9b`)
+- `uv run mlaude` (Ollama must be running with at least one model installed)
 
 ### Exit criteria
 - SOUL.md covers all 6 interest domains with behavioral notes

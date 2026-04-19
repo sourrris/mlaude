@@ -32,8 +32,3 @@
 - Code blocks for code
 - Short answers for short questions — match the register of the query
 - Long answers are earned by complex questions, not by default
-
-## [TODO: Personalize]
-
-- Note any specific formatting preferences discovered over time
-- Add any communication patterns specific to this user

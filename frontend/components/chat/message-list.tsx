@@ -4,7 +4,14 @@ import { useEffect, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import { ChevronRight, FileSearch, Globe2, Hammer, Sigma, Sparkles } from "lucide-react";
+import {
+  ChevronRight,
+  FileSearch,
+  Globe2,
+  Hammer,
+  Sigma,
+  Sparkles,
+} from "lucide-react";
 
 import { FileBadge } from "@/components/files/file-badge";
 import type { AssistantPacket, WorkspaceMessage } from "@/lib/types";
@@ -28,72 +35,97 @@ function ToolCard({
       <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--text-faint)]">
         {title}
       </p>
-      <p className="mt-1 text-sm text-[color:var(--text-soft)]">{description}</p>
+      <p className="mt-1 text-sm text-[color:var(--text-soft)]">
+        {description}
+      </p>
       {children ? <div className="mt-3">{children}</div> : null}
     </div>
   );
 }
 
-function AssistantTimeline({
-  packets,
-}: {
-  packets: AssistantPacket[];
-}) {
+function AssistantTimeline({ packets }: { packets: AssistantPacket[] }) {
   const reasoning = packets
-    .filter((packet): packet is Extract<AssistantPacket, { type: "reasoning_delta" }> => packet.type === "reasoning_delta")
+    .filter(
+      (
+        packet,
+      ): packet is Extract<AssistantPacket, { type: "reasoning_delta" }> =>
+        packet.type === "reasoning_delta",
+    )
     .map((packet) => packet.reasoning)
-    .join(" ");
+    .join("")
+    .trim();
 
   const searchQueries =
     packets.find(
-      (packet): packet is Extract<AssistantPacket, { type: "search_tool_queries_delta" }> =>
-        packet.type === "search_tool_queries_delta"
+      (
+        packet,
+      ): packet is Extract<
+        AssistantPacket,
+        { type: "search_tool_queries_delta" }
+      > => packet.type === "search_tool_queries_delta",
     )?.queries ?? [];
 
   const searchDocuments =
     packets.find(
-      (packet): packet is Extract<AssistantPacket, { type: "search_tool_documents_delta" }> =>
-        packet.type === "search_tool_documents_delta"
+      (
+        packet,
+      ): packet is Extract<
+        AssistantPacket,
+        { type: "search_tool_documents_delta" }
+      > => packet.type === "search_tool_documents_delta",
     )?.documents ?? [];
 
   const fileRead =
     packets.find(
-      (packet): packet is Extract<AssistantPacket, { type: "file_reader_result" }> =>
-        packet.type === "file_reader_result"
+      (
+        packet,
+      ): packet is Extract<AssistantPacket, { type: "file_reader_result" }> =>
+        packet.type === "file_reader_result",
     ) ?? null;
 
   const pythonStart =
     packets.find(
-      (packet): packet is Extract<AssistantPacket, { type: "python_tool_start" }> =>
-        packet.type === "python_tool_start"
+      (
+        packet,
+      ): packet is Extract<AssistantPacket, { type: "python_tool_start" }> =>
+        packet.type === "python_tool_start",
     ) ?? null;
   const pythonResult =
     packets.find(
-      (packet): packet is Extract<AssistantPacket, { type: "python_tool_delta" }> =>
-        packet.type === "python_tool_delta"
+      (
+        packet,
+      ): packet is Extract<AssistantPacket, { type: "python_tool_delta" }> =>
+        packet.type === "python_tool_delta",
     ) ?? null;
 
   const urls =
     packets.find(
       (packet): packet is Extract<AssistantPacket, { type: "open_url_urls" }> =>
-        packet.type === "open_url_urls"
+        packet.type === "open_url_urls",
     )?.urls ?? [];
   const urlDocuments =
     packets.find(
-      (packet): packet is Extract<AssistantPacket, { type: "open_url_documents" }> =>
-        packet.type === "open_url_documents"
+      (
+        packet,
+      ): packet is Extract<AssistantPacket, { type: "open_url_documents" }> =>
+        packet.type === "open_url_documents",
     )?.documents ?? [];
 
   return (
     <div className="mb-4 flex flex-col gap-3">
       {reasoning ? (
         <ToolCard
-          title="Reasoning"
-          description="The assistant is planning the next local workspace step."
+          title="Thinking"
+          description="Live reasoning emitted by the active model."
         >
-          <div className="flex items-start gap-3 rounded-2xl bg-[color:var(--bg-muted)] px-3 py-3">
-            <Sparkles className="mt-1 shrink-0 text-[color:var(--accent)]" size={16} />
-            <p className="text-sm leading-6 text-[color:var(--text-soft)]">{reasoning}</p>
+          <div className="rounded-2xl border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] px-4 py-3">
+            <p className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[color:var(--text-faint)]">
+              <Sparkles size={13} />
+              Model Trace
+            </p>
+            <p className="whitespace-pre-wrap text-sm leading-6 text-[color:var(--text-soft)]">
+              {reasoning}
+            </p>
           </div>
         </ToolCard>
       ) : null}
@@ -120,7 +152,10 @@ function AssistantTimeline({
                   key={document.document_id}
                   className="flex items-start gap-3 rounded-2xl border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] px-3 py-3"
                 >
-                  <FileSearch size={16} className="mt-1 shrink-0 text-[color:var(--accent)]" />
+                  <FileSearch
+                    size={16}
+                    className="mt-1 shrink-0 text-[color:var(--accent)]"
+                  />
                   <div>
                     <p className="text-sm font-medium text-[color:var(--text-main)]">
                       {document.title}
@@ -183,20 +218,29 @@ function AssistantTimeline({
       ) : null}
 
       {urls.length > 0 ? (
-        <ToolCard title="Open URL" description="Fetched additional context from linked pages.">
+        <ToolCard
+          title="Open URL"
+          description="Fetched additional context from linked pages."
+        >
           <div className="space-y-2">
             {urls.map((url) => (
               <div
                 key={url}
                 className="flex items-start gap-3 rounded-2xl border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] px-3 py-3"
               >
-                <Globe2 className="mt-1 shrink-0 text-[color:var(--accent)]" size={16} />
+                <Globe2
+                  className="mt-1 shrink-0 text-[color:var(--accent)]"
+                  size={16}
+                />
                 <div>
-                  <p className="text-sm font-medium text-[color:var(--text-main)]">{url}</p>
+                  <p className="text-sm font-medium text-[color:var(--text-main)]">
+                    {url}
+                  </p>
                   {urlDocuments.find((document) => document.source === url) ? (
                     <p className="mt-1 text-sm leading-6 text-[color:var(--text-soft)]">
                       {
-                        urlDocuments.find((document) => document.source === url)?.preview
+                        urlDocuments.find((document) => document.source === url)
+                          ?.preview
                       }
                     </p>
                   ) : null}
@@ -220,12 +264,14 @@ export function MessageList({ messages, onOpenSources }: MessageListProps) {
   const renderedMessages = useMemo(() => messages, [messages]);
 
   return (
-    <div className="flex-1 overflow-y-auto px-5 py-6">
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
+    <div className="flex-1 overflow-y-auto px-5 py-6" data-testid="message-list">
+      <div className="mx-auto flex w-full max-4xl flex-col gap-8">
+
         {renderedMessages.map((message) => {
           const streaming = Boolean(message.meta?.streaming);
           const stopReason = String(message.meta?.stop_reason ?? "");
-          const showSources = message.role === "assistant" && message.documents.length > 0;
+          const showSources =
+            message.role === "assistant" && message.documents.length > 0;
 
           if (message.role === "user") {
             return (
@@ -265,7 +311,7 @@ export function MessageList({ messages, onOpenSources }: MessageListProps) {
                     </div>
                   ) : (
                     <p className="text-sm text-[color:var(--text-soft)]">
-                      {streaming ? "Working through the request…" : "No response content."}
+                      {streaming ? "Thinking…" : "No response content."}
                     </p>
                   )}
 

@@ -1,56 +1,82 @@
----
-  # CLAUDE.md                                                                                                                                                  
-                                                                                                                                                               
-  This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.                                                       
-                                                                                                                                                               
-  ## Project                                             
-            
-  Mlaude is a local-first personal AI agent — a lightweight web UI that connects to Ollama for LLM inference. Single-process Python backend (FastAPI +
-  WebSocket), single-file frontend (vanilla JS), SQLite persistence. No Node.js, no build step, no tests.                                                      
-                                                                                                         
-  ## Commands                                                                                                                                                  
-                                                         
-  ```bash
-  uv sync                    # install Python dependencies
-  cd frontend && npm install # install frontend dependencies (first time)
-  cd frontend && npm run build  # build React app → static/
-  uv run mlaude              # start server on http://0.0.0.0:7474
-  uv run mlaude --port 8080  # custom port
+# CLAUDE.md
 
-  # Frontend dev mode (hot reload, proxies to FastAPI on :7474):
-  cd frontend && npm run dev # runs on http://localhost:5173                        
-                                                                                                                                                               
-  Requires Ollama running locally with llama3.1:8b-instruct-q4_K_M pulled.
-                                                                                                                                                               
-  Architecture                                           
-                                                                                                                                                               
-  Browser (WebSocket) → FastAPI server → Ollama (async streaming)
-                           ↕
-                      SQLite (aiosqlite)
+## Project
 
-  - WebSocket /ws is the main chat protocol. Client sends JSON messages (message, new_session, list_sessions, load_session, delete_session), server responds   
-  with streaming token chunks, done, error, sessions, history, etc.
-  - SOUL.md (repo root) is the system prompt identity, loaded at each request with current datetime appended.                                                  
-  - ~/.mlaude/sessions.db stores all sessions and messages. Created automatically on first run.                                                                
-   
-  Source Layout                                                                                                                                                
-                                                         
-  All backend code is in src/mlaude/:                                                                                                                          
-  - config.py — paths (~/.mlaude/), Ollama model/URL, context window size
-  - llm.py — OllamaProvider with async streaming and title generation                                                                                          
-  - db.py — SQLite CRUD via aiosqlite, uses a _connect() context manager that lazy-inits schema
-  - server.py — FastAPI app, WebSocket handler (message routing, streaming, auto-title on first exchange)
-  - cli.py — Typer app, single serve command, prints LAN IP                                                                                                    
-   
-  Frontend is static/index.html — all CSS + JS inline, uses Pretext via ESM CDN for text layout. PWA support via manifest.json + sw.js.                        
-                                                         
-  Key Conventions                                                                                                                                              
-                                                         
-  - No tests. Manual testing only.                                                                                                                             
-  - No commits unless explicitly asked. Never stage, commit, or push without direct instruction.
-  - Conservative versioning. Use v0.x for early builds, not v1.                                                                                                
-  - Frontend is Vite + React + TypeScript in frontend/. Build with `cd frontend && npm run build`. Output goes to static/.
-  - Dev mode: `cd frontend && npm run dev` (port 5173, proxies API/WS to :7474).
-  - uv is the package manager (not pip directly).                                                                                                              
-   
-  --- 
+Mlaude is a local-first research workspace built on:
+
+- `src/mlaude`: FastAPI + SQLAlchemy backend
+- `frontend`: Next.js App Router frontend
+- `Ollama`: the only chat and embedding runtime
+
+The current harness is intentionally bounded. Each user turn creates a persisted
+`agent_run` with fixed step types:
+
+- `classify`
+- `retrieve_local`
+- `plan_search`
+- `search_web`
+- `fetch_page`
+- `extract_page`
+- `rerank_evidence`
+- `synthesize`
+- `verify_citations`
+
+The product goal is evidence discipline and inspectable runs, not open-ended
+agent autonomy.
+
+## Commands
+
+```bash
+# Backend deps
+python -m pip install -e ".[dev]"
+
+# Frontend deps
+cd frontend && npm install
+
+# Start backend
+uv run mlaude --host 127.0.0.1 --port 7474
+
+# Start frontend
+cd frontend && npm run dev
+
+# Backend sanity / tests
+python -m compileall src
+pytest
+
+# Frontend production build
+cd frontend && npm run build
+```
+
+## Runtime Requirements
+
+- Ollama must be running locally.
+- `MLAUDE_DEFAULT_EMBEDDING_MODEL` defaults to `nomic-embed-text`.
+- Chat and embeddings both stay local; no cloud providers are used in this milestone.
+
+## Architecture Notes
+
+- Chat remains on `/api/chat/stream`, but the server now emits run packets alongside
+  message packets.
+- Session detail includes both chat history and persisted runs.
+- Local retrieval is hybrid: lexical scoring + Ollama embeddings.
+- Web research uses DDGS for search plus structured fetch/extract, with
+  `trafilatura` first and `readability-lxml` / HTML fallback behind it.
+- The frontend exposes a session-level `Chat | Runs` toggle. `Runs` is the
+  inspection surface for plan, steps, evidence, and stop reasons.
+
+## Important Files
+
+- `src/mlaude/server.py`: orchestration, API routes, run persistence, stream packets
+- `src/mlaude/retrieval.py`: local chunk index, embeddings, hybrid scoring, reranking
+- `src/mlaude/tools/web_search.py`: DDGS adapter, URL normalization, fetch/extract
+- `src/mlaude/models.py`: sessions, messages, files, `agent_runs`, `agent_steps`
+- `frontend/components/chat/chat-workspace.tsx`: session shell and `Chat | Runs` mode
+- `frontend/components/chat/runs-panel.tsx`: run inspection UI
+- `evals/scenarios/research-harness.json`: checked-in harness scenarios
+
+## Conventions
+
+- Prefer grounded answers with citations over speculative completeness.
+- If citations cannot be verified against the evidence pool, stop with insufficient evidence.
+- Do not add cloud runtimes or SaaS search APIs in this milestone.
+- Keep Ollama as the only runtime surface for both generation and embeddings.

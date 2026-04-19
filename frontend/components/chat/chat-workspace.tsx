@@ -6,12 +6,13 @@ import { ArrowUpRight, RefreshCcw } from "lucide-react";
 
 import { ChatInputBar } from "@/components/chat/input-bar";
 import { MessageList } from "@/components/chat/message-list";
+import { RunsPanel } from "@/components/chat/runs-panel";
 import { SourceSidebar } from "@/components/chat/source-sidebar";
 import { WelcomeState } from "@/components/chat/welcome-state";
 import { WorkspaceChrome } from "@/components/ui/workspace-chrome";
 import { createSession, getModelSettings, getSessionDetail, streamChat, stopChat, uploadFile } from "@/lib/api";
 import { applyPacketToMessage } from "@/lib/chat-state";
-import type { AssistantPacket, ModelSettingsResponse, WorkspaceFile, WorkspaceMessage } from "@/lib/types";
+import type { AgentRun, AssistantPacket, ModelSettingsResponse, WorkspaceFile, WorkspaceMessage } from "@/lib/types";
 
 function buildAssistantPlaceholder(requestId: string, sessionId: string): WorkspaceMessage {
   return {
@@ -34,12 +35,15 @@ export function ChatWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeSessionId = searchParams.get("session");
+  const activeView = searchParams.get("mode") === "runs" ? "runs" : "chat";
 
   const [messages, setMessages] = useState<WorkspaceMessage[]>([]);
   const [sessionTitle, setSessionTitle] = useState("New session");
   const [draftFiles, setDraftFiles] = useState<WorkspaceFile[]>([]);
   const [composerValue, setComposerValue] = useState("");
   const [sessionFiles, setSessionFiles] = useState<WorkspaceFile[]>([]);
+  const [runs, setRuns] = useState<AgentRun[]>([]);
+  const [liveRun, setLiveRun] = useState<AgentRun | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [loadingSession, setLoadingSession] = useState(false);
   const [selectedSourcesMessageId, setSelectedSourcesMessageId] = useState<string | null>(null);
@@ -84,6 +88,8 @@ export function ChatWorkspace() {
         setMessages([]);
         setDraftFiles([]);
         setSessionFiles([]);
+        setRuns([]);
+        setLiveRun(null);
         setSessionTitle("New session");
         setSelectedSourcesMessageId(null);
         setLoadingSession(false);
@@ -96,6 +102,8 @@ export function ChatWorkspace() {
         if (!cancelled) {
           setMessages(detail.messages);
           setSessionFiles(detail.files);
+          setRuns(detail.runs);
+          setLiveRun(null);
           setDraftFiles((current) =>
             current.filter((file) =>
               detail.files.some((sessionFile) => sessionFile.id === file.id)
@@ -148,7 +156,7 @@ export function ChatWorkspace() {
     const session = await createSession();
     window.dispatchEvent(new Event("mlaude:sessions-changed"));
     startTransition(() => {
-      router.replace(`/?session=${session.id}`);
+      router.replace(`/?session=${session.id}${activeView === "runs" ? "&mode=runs" : ""}`);
     });
     return session.id;
   }
@@ -157,8 +165,21 @@ export function ChatWorkspace() {
     const detail = await getSessionDetail(sessionId);
     setMessages(detail.messages);
     setSessionFiles(detail.files);
+    setRuns(detail.runs);
     setSessionTitle(detail.session.title);
     window.dispatchEvent(new Event("mlaude:sessions-changed"));
+  }
+
+  function setViewMode(mode: "chat" | "runs") {
+    const next = new URLSearchParams(searchParams.toString());
+    if (mode === "runs") {
+      next.set("mode", "runs");
+    } else {
+      next.delete("mode");
+    }
+    startTransition(() => {
+      router.replace(`/?${next.toString()}`);
+    });
   }
 
   async function handleSend(submittedValue?: string) {
@@ -172,6 +193,7 @@ export function ChatWorkspace() {
     const requestId = crypto.randomUUID();
     currentRequestIdRef.current = requestId;
     setStreaming(true);
+    setLiveRun(null);
 
     const optimisticUser: WorkspaceMessage = {
       id: `user-${requestId}`,
@@ -205,6 +227,24 @@ export function ChatWorkspace() {
           temperature: modelState?.settings.temperature,
         },
         (packet) => {
+          if (packet.type === "run_start") {
+            setLiveRun(packet.run);
+          } else if (packet.type === "step_start" || packet.type === "step_result") {
+            setLiveRun((current) => {
+              if (!current || current.id !== packet.run_id) {
+                return current;
+              }
+              const steps = current.steps.filter((step) => step.id !== packet.step.id);
+              steps.push(packet.step);
+              steps.sort((left, right) => left.order_index - right.order_index);
+              return { ...current, steps };
+            });
+          } else if (packet.type === "run_complete") {
+            setLiveRun(packet.run);
+          } else if (packet.type === "run_error") {
+            setChatError(packet.message);
+          }
+
           setMessages((current) =>
             current.map((message) => {
               if (message.id !== optimisticAssistant.id) {
@@ -246,6 +286,7 @@ export function ChatWorkspace() {
     } finally {
       setStreaming(false);
       currentRequestIdRef.current = null;
+      setLiveRun(null);
     }
   }
 
@@ -286,8 +327,38 @@ export function ChatWorkspace() {
               </h2>
             </div>
             <div className="flex items-center gap-3">
+              <div className="flex items-center rounded-full border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] p-1">
+                <button
+                  type="button"
+                  data-testid="session-view-chat"
+                  onClick={() => setViewMode("chat")}
+                  className={`rounded-full px-3 py-1.5 text-xs uppercase tracking-[0.16em] transition ${
+                    activeView === "chat"
+                      ? "bg-white text-[color:var(--text-main)] shadow-sm"
+                      : "text-[color:var(--text-faint)]"
+                  }`}
+                >
+                  Chat
+                </button>
+                <button
+                  type="button"
+                  data-testid="session-view-runs"
+                  onClick={() => setViewMode("runs")}
+                  className={`rounded-full px-3 py-1.5 text-xs uppercase tracking-[0.16em] transition ${
+                    activeView === "runs"
+                      ? "bg-white text-[color:var(--text-main)] shadow-sm"
+                      : "text-[color:var(--text-faint)]"
+                  }`}
+                >
+                  Runs
+                </button>
+              </div>
               <div className="rounded-full border border-[color:var(--border-soft)] bg-white px-3 py-2 text-xs uppercase tracking-[0.16em] text-[color:var(--text-faint)]">
-                {modelState?.health.running ? "Ollama ready" : "Runtime offline"}
+                {modelState?.health.running
+                  ? modelState.health.embedding_model_available
+                    ? "Chat + Embeddings ready"
+                    : "Embeddings missing"
+                  : "Runtime offline"}
               </div>
               <button
                 type="button"
@@ -304,6 +375,8 @@ export function ChatWorkspace() {
             <div className="flex flex-1 items-center justify-center text-sm text-[color:var(--text-soft)]">
               Loading session…
             </div>
+          ) : activeView === "runs" ? (
+            <RunsPanel runs={runs} liveRun={liveRun} />
           ) : messages.length === 0 ? (
             <WelcomeState onSuggestion={(value) => void handleSend(value)} />
           ) : (

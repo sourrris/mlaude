@@ -82,10 +82,10 @@ ollama serve
 If you want to preload a model:
 
 ```bash
-ollama pull qwen3.5:8b
+ollama pull <model_name>
 ```
 
-You can also choose a different installed model later in the app settings.
+The app will automatically discover and let you choose from any models you have installed.
 
 ## Running The App
 
