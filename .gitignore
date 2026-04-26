@@ -9,10 +9,4 @@ build/
 .tmp/
 *.db
 uv.lock
-/.playwright-mcp
 .DS_Store
-frontend/node_modules/
-frontend/dist/
-frontend/.next/
-frontend/test-results/
-frontend/playwright-report/

@@ -1,32 +1,34 @@
 [project]
 name = "mlaude"
-version = "0.2.0"
-description = "Personal AI agent — local, private, minimal"
+version = "0.3.0-dev"
+description = "Local AI agent — CLI-first, tool-calling, self-improving"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.30.0",
-    "aiosqlite>=0.20.0",
-    "sqlalchemy>=2.0.36",
-    "greenlet>=3.1.1",
-    "python-multipart>=0.0.20",
     "httpx>=0.28.1",
-    "pypdf>=5.4.0",
-    "python-docx>=1.2.0",
-    "typer[all]>=0.9.0",
     "rich>=13.0.0",
+    "typer[all]>=0.9.0",
+    "prompt_toolkit>=3.0.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=0.24.0",
+    "ruff>=0.4.0",
 ]
-browser = [
-    "mcp>=1.9.0",
+telegram = [
+    "python-telegram-bot>=21.0",
 ]
-ollama = [
-    "ollama>=0.6.1",
+openai = [
+    "openai>=1.50.0",
+]
+anthropic = [
+    "anthropic>=0.40.0",
+]
+gateway = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
 ]
 
 [project.scripts]
@@ -42,3 +44,7 @@ packages = ["src/mlaude"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
