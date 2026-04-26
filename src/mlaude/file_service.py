@@ -121,7 +121,7 @@ async def save_upload(
     scope: str,
     session_id: str | None,
     retrieval_index: LocalRetrievalIndex,
-    ollama_base_url: str,
+    llm_base_url: str,
     embedding_model: str,
 ) -> StoredFile:
     ensure_app_dirs()
@@ -163,7 +163,7 @@ async def save_upload(
         title=record.title,
         source=record.filename,
         text=extracted,
-        base_url=ollama_base_url,
+        base_url=llm_base_url,
         embedding_model=embedding_model,
     )
 

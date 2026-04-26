@@ -16,6 +16,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mlaude.browser_mcp import (
+    BrowserGuardrailError,
+    BrowserMCPError,
+    BrowserMCPService,
+    extract_urls,
+)
 from mlaude.database import SessionLocal, get_session, init_db
 from mlaude.file_service import get_file_or_404, read_file_excerpt, save_upload, serialize_file
 from mlaude.models import (
@@ -37,11 +43,9 @@ from mlaude.settings import (
     MAX_FILE_READ_CHARS,
     MAX_HISTORY_MESSAGES,
     MAX_SEARCH_RESULTS,
-    MAX_WEB_FETCH_RESULTS,
-    MAX_WEB_SEARCH_RESULTS,
-    OLLAMA_BASE_URL,
+    LLM_BASE_URL,
+    PLAYWRIGHT_ENABLED,
 )
-from mlaude.tools.web_search import fetch_pages, page_to_document, search_web
 
 
 CITATION_RE = re.compile(r"\[(\d+)\]")
@@ -49,17 +53,23 @@ CURRENT_INFO_RE = re.compile(
     r"\b(latest|today|current|recent|news|price|stock|weather|fresh|now|breaking)\b",
     re.IGNORECASE,
 )
-FIXED_RUN_PLAN = [
+SIMPLE_CHAT_RE = re.compile(
+    r"^\s*(hi|hello|hey|yo|sup|gm|gn|good morning|good afternoon|good evening|good night|thanks|thank you|how are you)\s*[!.?]*\s*$",
+    re.IGNORECASE,
+)
+BASE_RUN_PLAN = [
     "classify",
     "retrieve_local",
-    "plan_search",
-    "search_web",
-    "fetch_page",
-    "extract_page",
-    "rerank_evidence",
-    "synthesize",
-    "verify_citations",
 ]
+FINAL_RUN_PLAN = ["rerank_evidence", "synthesize", "verify_citations"]
+BROWSER_SEARCH_RE = re.compile(
+    r"\b(search|google|look up|lookup|find online|web|internet|browse|latest|today|current|recent|news)\b",
+    re.IGNORECASE,
+)
+BROWSER_CONTROL_RE = re.compile(
+    r"\b(open|go to|navigate|click|type|fill|select|submit|screenshot|pdf|console|network|devtools|inspect)\b",
+    re.IGNORECASE,
+)
 
 
 class ChatStreamRequest(BaseModel):
@@ -72,7 +82,8 @@ class ChatStreamRequest(BaseModel):
 
 
 class ModelSettingsPayload(BaseModel):
-    ollama_base_url: str = OLLAMA_BASE_URL
+    provider: str = "lm-studio"
+    llm_base_url: str = LLM_BASE_URL
     default_chat_model: str = DEFAULT_CHAT_MODEL
     default_embedding_model: str = DEFAULT_EMBEDDING_MODEL
     temperature: float = DEFAULT_TEMPERATURE
@@ -80,6 +91,18 @@ class ModelSettingsPayload(BaseModel):
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def as_utc_aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def elapsed_ms(started_at: datetime | None, completed_at: datetime) -> int:
+    start = as_utc_aware(started_at) if started_at else as_utc_aware(completed_at)
+    end = as_utc_aware(completed_at)
+    return max(0, int((end - start).total_seconds() * 1000))
 
 
 def packet(type_: str, **kwargs: Any) -> dict[str, Any]:
@@ -107,6 +130,39 @@ def build_search_queries(content: str) -> list[str]:
     return list(dict.fromkeys(query for query in parts if query))
 
 
+def classify_browser_intent(content: str, *, freshness_sensitive: bool) -> str:
+    lowered = content.lower()
+    explicit_urls = extract_urls(content)
+    if explicit_urls and BROWSER_CONTROL_RE.search(lowered):
+        return "open_url"
+    if BROWSER_CONTROL_RE.search(lowered) and (
+        explicit_urls
+        or "browser" in lowered
+        or "page" in lowered
+        or any(marker in lowered for marker in ("click", "type", "fill", "select", "screenshot", "pdf", "console", "network", "devtools"))
+    ):
+        return "browser_control"
+    if explicit_urls:
+        return "open_url"
+    if freshness_sensitive or BROWSER_SEARCH_RE.search(lowered):
+        return "web_search"
+    return "none"
+
+
+def build_dynamic_run_plan(classification: dict[str, Any]) -> list[str]:
+    plan = ["classify"]
+    if classification.get("has_local_files") and not classification.get("is_simple_chat"):
+        plan.append("retrieve_local")
+
+    browser_intent = classification.get("browser_intent")
+    if browser_intent == "web_search":
+        plan.append("browser_search")
+    elif browser_intent in {"open_url", "browser_control"}:
+        plan.append("browser_control")
+
+    return [*plan, *FINAL_RUN_PLAN]
+
+
 def build_system_prompt(now: datetime) -> str:
     return (
         "You are mlaude, a strict local-first research agent.\n\n"
@@ -115,6 +171,7 @@ def build_system_prompt(now: datetime) -> str:
         "- Every factual claim in the final answer must be cited with [n].\n"
         "- If the evidence set is too weak, say that evidence is insufficient.\n"
         "- Do not cite anything that is not in the evidence JSON.\n"
+        "- For short greetings or social niceties, respond in one short sentence without deep analysis.\n"
         "- Keep the answer concise and directly responsive.\n\n"
         f"Current local date and time: {now.isoformat(timespec='minutes')}"
     )
@@ -155,31 +212,42 @@ def build_prompt_messages(
             continue
         prompt_messages.append({"role": message.role, "content": message.content})
 
-    prompt_messages.append(
-        {
-            "role": "user",
-            "content": (
-                f"Question:\n{current_user_content.strip()}\n\n"
-                "Evidence JSON:\n"
-                + json.dumps({"documents": prompt_documents}, indent=2)
-                + "\n\nRespond using only this evidence."
-            ),
-        }
-    )
+    evidence_mode = bool(prompt_documents)
+    if evidence_mode:
+        user_prompt = (
+            f"Question:\n{current_user_content.strip()}\n\n"
+            "Evidence JSON:\n"
+            + json.dumps({"documents": prompt_documents}, indent=2)
+            + "\n\nRespond using only this evidence. Cite factual claims with [n]."
+        )
+    else:
+        user_prompt = (
+            f"Question:\n{current_user_content.strip()}\n\n"
+            "No local evidence documents are available.\n"
+            "If this is simple conversation or general help, answer directly.\n"
+            "If the request needs grounded evidence, say that and ask for local files."
+        )
+
+    prompt_messages.append({"role": "user", "content": user_prompt})
     return prompt_messages
 
 
 def classify_request(content: str, *, has_local_files: bool) -> dict[str, Any]:
     lowered = content.lower()
     current_info = bool(CURRENT_INFO_RE.search(lowered))
-    explicit_urls = re.findall(r"https?://[^\s]+", content)
+    explicit_urls = extract_urls(content)
     local_bias = has_local_files or "my file" in lowered or "uploaded" in lowered
+    is_simple_chat = bool(SIMPLE_CHAT_RE.match(content.strip()))
+    browser_intent = "none" if is_simple_chat else classify_browser_intent(
+        content,
+        freshness_sensitive=current_info,
+    )
 
-    if explicit_urls:
-        mode = "mixed" if local_bias else "web_only"
-    elif current_info and local_bias:
+    if is_simple_chat:
+        mode = "conversation"
+    elif browser_intent in {"web_search", "open_url", "browser_control"} and local_bias:
         mode = "mixed"
-    elif current_info:
+    elif browser_intent in {"web_search", "open_url", "browser_control"}:
         mode = "web_only"
     elif local_bias:
         mode = "local_only"
@@ -188,29 +256,42 @@ def classify_request(content: str, *, has_local_files: bool) -> dict[str, Any]:
 
     return {
         "mode": mode,
-        "needs_web": mode in {"mixed", "web_only"},
-        "explicit_urls": explicit_urls[:MAX_WEB_FETCH_RESULTS],
+        "needs_web": browser_intent in {"web_search", "open_url", "browser_control"},
+        "browser_intent": browser_intent,
+        "explicit_urls": explicit_urls[:5],
+        "playwright_enabled": PLAYWRIGHT_ENABLED,
         "freshness_sensitive": current_info,
         "has_local_files": has_local_files,
+        "is_simple_chat": is_simple_chat,
     }
 
 
-def chunk_text_for_stream(text: str, chunk_size: int = 180) -> list[str]:
-    words = text.split()
-    if not words:
-        return []
-    chunks: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip()
-        if len(candidate) > chunk_size and current:
-            chunks.append(f"{current} ")
-            current = word
-        else:
-            current = candidate
-    if current:
-        chunks.append(current)
-    return chunks
+def should_enable_thinking(
+    *,
+    content: str,
+    classification: dict[str, Any],
+    evidence_count: int,
+) -> bool:
+    if classification.get("is_simple_chat"):
+        return False
+    if evidence_count > 0 or classification.get("freshness_sensitive"):
+        return True
+
+    lowered = content.lower()
+    complex_intent_markers = (
+        "analyze",
+        "compare",
+        "explain",
+        "why",
+        "how",
+        "design",
+        "debug",
+        "implement",
+        "step by step",
+    )
+    if any(marker in lowered for marker in complex_intent_markers):
+        return True
+    return len(content.strip()) > 100
 
 
 def build_citation_packets(
@@ -240,6 +321,9 @@ def verify_citations(content: str, citation_map: dict[int, str]) -> dict[str, An
     if invalid:
         return {"ok": False, "reason": "invalid_citation", "invalid_numbers": invalid}
 
+    if not citation_map:
+        return {"ok": True, "reason": "no_evidence_mode", "invalid_numbers": []}
+
     if numbers:
         return {"ok": True, "reason": "verified", "invalid_numbers": []}
 
@@ -255,7 +339,8 @@ async def load_model_settings(db_session: AsyncSession) -> dict[str, Any]:
         select(AppSetting).where(AppSetting.key == "model_settings")
     )
     payload = {
-        "ollama_base_url": OLLAMA_BASE_URL,
+        "provider": "lm-studio",
+        "llm_base_url": LLM_BASE_URL,
         "default_chat_model": DEFAULT_CHAT_MODEL,
         "default_embedding_model": DEFAULT_EMBEDDING_MODEL,
         "temperature": DEFAULT_TEMPERATURE,
@@ -465,43 +550,12 @@ def stop_requested(stop_event: asyncio.Event) -> bool:
     return stop_event.is_set()
 
 
-async def collect_model_response(
-    *,
-    runtime: BaseRuntime,
-    model_settings: dict[str, Any],
-    request: ChatStreamRequest,
-    messages: list[dict[str, str]],
-    stop_event: asyncio.Event,
-) -> tuple[str, str, str]:
-    answer_parts: list[str] = []
-    reasoning_parts: list[str] = []
-    stop_reason = "finished"
-
-    async for chunk in runtime.stream_chat(
-        base_url=model_settings["ollama_base_url"],
-        model=request.model or model_settings["default_chat_model"],
-        system_prompt=build_system_prompt(utcnow()),
-        messages=messages,
-        temperature=request.temperature
-        if request.temperature is not None
-        else model_settings["temperature"],
-    ):
-        if stop_requested(stop_event):
-            stop_reason = "user_cancelled"
-            break
-        if chunk.get("thinking"):
-            reasoning_parts.append(chunk["thinking"])
-        if chunk.get("content"):
-            answer_parts.append(chunk["content"])
-
-    return "".join(answer_parts).strip(), "".join(reasoning_parts).strip(), stop_reason
-
-
 async def stream_chat_packets(
     *,
     db_session: AsyncSession,
     runtime: BaseRuntime,
     retrieval_index: LocalRetrievalIndex,
+    browser_service: BrowserMCPService | None = None,
     stop_event: asyncio.Event,
     request: ChatStreamRequest,
     model_settings: dict[str, Any],
@@ -542,15 +596,36 @@ async def stream_chat_packets(
     await db_session.commit()
     await db_session.refresh(user_message)
 
+    session_files = await list_workspace_files(db_session, session_id=request.session_id)
+    library_files = await list_workspace_files(db_session, scope="library")
+    allowed_file_ids = {file.id for file in [*session_files, *library_files]}
+    history = list(
+        (
+            await db_session.scalars(
+                select(ChatMessage)
+                .where(ChatMessage.session_id == request.session_id, ChatMessage.id != user_message.id)
+                .order_by(ChatMessage.created_at.asc())
+            )
+        ).all()
+    )
+    classification = classify_request(
+        request.content,
+        has_local_files=bool(allowed_file_ids),
+    )
+    run_plan = build_dynamic_run_plan(classification)
+
     run = AgentRun(
         request_id=request.request_id,
         session_id=request.session_id,
         user_message_id=user_message.id,
         status="running",
-        plan=FIXED_RUN_PLAN,
+        plan=run_plan,
         timings={},
         artifacts={},
-        meta={"model": request.model or model_settings["default_chat_model"]},
+        meta={
+            "model": request.model or model_settings["default_chat_model"],
+            "browser_intent": classification.get("browser_intent"),
+        },
         started_at=utcnow(),
     )
     db_session.add(run)
@@ -567,30 +642,16 @@ async def stream_chat_packets(
     assistant_packets.append(run_start_packet)
     yield run_start_packet
 
-    session_files = await list_workspace_files(db_session, session_id=request.session_id)
-    library_files = await list_workspace_files(db_session, scope="library")
-    allowed_file_ids = {file.id for file in [*session_files, *library_files]}
-    history = list(
-        (
-            await db_session.scalars(
-                select(ChatMessage)
-                .where(ChatMessage.session_id == request.session_id, ChatMessage.id != user_message.id)
-                .order_by(ChatMessage.created_at.asc())
-            )
-        ).all()
-    )
-
-    classification: dict[str, Any] = {}
     local_documents: list[dict[str, Any]] = []
-    search_queries: list[str] = []
-    web_results: list[dict[str, Any]] = []
-    fetched_pages: list[dict[str, Any]] = []
-    extracted_pages: list[dict[str, Any]] = []
+    browser_documents: list[dict[str, Any]] = []
     final_documents: list[dict[str, Any]] = []
+    browser_direct_response: str | None = None
     captured_reasoning = ""
+    message_started = False
+    reasoning_started = False
 
     try:
-        for order_index, step_type in enumerate(FIXED_RUN_PLAN):
+        for order_index, step_type in enumerate(run_plan):
             if stop_requested(stop_event):
                 stop_reason = "user_cancelled"
                 break
@@ -603,21 +664,15 @@ async def stream_chat_packets(
                     "query": request.content,
                     "allowed_file_count": len(allowed_file_ids),
                 }
-            elif step_type == "plan_search":
-                input_payload = {"content": request.content, "classification": classification}
-            elif step_type == "search_web":
-                input_payload = {"queries": search_queries}
-            elif step_type == "fetch_page":
-                input_payload = {
-                    "urls": [item["source"] for item in web_results[:MAX_WEB_FETCH_RESULTS]]
-                    or classification.get("explicit_urls", []),
-                }
-            elif step_type == "extract_page":
-                input_payload = {"pages": len(fetched_pages)}
             elif step_type == "rerank_evidence":
                 input_payload = {
                     "local_documents": len(local_documents),
-                    "web_documents": len(extracted_pages),
+                    "browser_documents": len(browser_documents),
+                }
+            elif step_type in {"browser_search", "browser_control"}:
+                input_payload = {
+                    "content": request.content,
+                    "browser_intent": classification.get("browser_intent"),
                 }
             elif step_type == "synthesize":
                 input_payload = {"evidence_count": len(final_documents)}
@@ -649,16 +704,36 @@ async def stream_chat_packets(
                 run.artifacts = {**(run.artifacts or {}), "classification": classification}
 
             elif step_type == "retrieve_local":
-                if allowed_file_ids:
+                if classification.get("is_simple_chat"):
+                    local_documents = []
+                    step = await finish_run_step(
+                        db_session,
+                        step=step,
+                        status="skipped",
+                        output_payload={"documents_found": 0, "reason": "simple_chat"},
+                    )
+                elif allowed_file_ids:
                     local_documents = await retrieval_index.search(
                         query=request.content,
-                        base_url=model_settings["ollama_base_url"],
+                        base_url=model_settings["llm_base_url"],
                         embedding_model=model_settings["default_embedding_model"],
                         allowed_file_ids=allowed_file_ids,
                         limit=MAX_SEARCH_RESULTS,
                     )
+                    step = await finish_run_step(
+                        db_session,
+                        step=step,
+                        status="completed",
+                        output_payload={"documents_found": len(local_documents)},
+                    )
                 else:
                     local_documents = []
+                    step = await finish_run_step(
+                        db_session,
+                        step=step,
+                        status="completed",
+                        output_payload={"documents_found": len(local_documents)},
+                    )
 
                 if local_documents:
                     tool_packets = [
@@ -672,145 +747,147 @@ async def stream_chat_packets(
                         yield item
                     assistant_documents.extend(local_documents)
 
-                step = await finish_run_step(
-                    db_session,
-                    step=step,
-                    status="completed",
-                    output_payload={"documents_found": len(local_documents)},
-                )
-
-            elif step_type == "plan_search":
-                needs_web = classification.get("needs_web", False)
-                if not needs_web and not local_documents:
-                    needs_web = True
-                search_queries = (
-                    classification.get("explicit_urls", [])
-                    if classification.get("explicit_urls")
-                    else build_search_queries(request.content)
-                )
-                planned = {
-                    "needs_web": needs_web,
-                    "queries": search_queries if needs_web else [],
-                }
-                step = await finish_run_step(
-                    db_session,
-                    step=step,
-                    status="completed" if needs_web else "skipped",
-                    output_payload=planned,
-                )
-                run.artifacts = {**(run.artifacts or {}), "search_plan": planned}
-                if not needs_web:
-                    search_queries = []
-
-            elif step_type == "search_web":
-                if not search_queries:
+            elif step_type == "browser_search":
+                if browser_service is None:
                     step = await finish_run_step(
                         db_session,
                         step=step,
-                        status="skipped",
+                        status="error",
                         output_payload={"documents_found": 0},
+                        error_text="Browser service is not available.",
                     )
                 else:
-                    if classification.get("explicit_urls"):
-                        web_results = [
-                            {
-                                "document_id": f"web-result:explicit:{url}",
-                                "file_id": None,
-                                "title": url,
-                                "source": url,
-                                "source_kind": "web_result",
-                                "section": "Explicit URL",
-                                "content": "",
-                                "preview": url,
-                                "query": request.content,
-                                "score": 1.0,
-                                "retrieval_score": 1.0,
-                                "fetched_at": utcnow().isoformat(),
-                                "extract_status": "not_fetched",
-                            }
-                            for url in classification["explicit_urls"]
-                        ]
-                    else:
-                        web_results = await search_web(
-                            search_queries[0],
-                            max_results=MAX_WEB_SEARCH_RESULTS,
-                        )
-                    if web_results:
-                        tool_packets = [
+                    try:
+                        search_packets = [
                             packet("search_tool_start", is_internet_search=True),
-                            packet("search_tool_queries_delta", queries=search_queries),
-                            packet("search_tool_documents_delta", documents=web_results),
-                            packet("section_end"),
+                            packet("search_tool_queries_delta", queries=[request.content.strip()]),
                         ]
-                        for item in tool_packets:
+                        for item in search_packets:
                             assistant_packets.append(item)
                             yield item
-                    assistant_documents.extend(web_results)
-                    step = await finish_run_step(
-                        db_session,
-                        step=step,
-                        status="completed",
-                        output_payload={"documents_found": len(web_results)},
-                    )
 
-            elif step_type == "fetch_page":
-                urls = (
-                    classification.get("explicit_urls", [])
-                    or [item["source"] for item in web_results[:MAX_WEB_FETCH_RESULTS]]
-                )
-                if not urls:
+                        result = await browser_service.search(
+                            request.content.strip(),
+                            max_results=min(MAX_SEARCH_RESULTS, 5),
+                        )
+                        browser_documents = result.documents
+                        run.artifacts = {
+                            **(run.artifacts or {}),
+                            "browser_actions": result.packets,
+                            "browser_documents": browser_documents,
+                        }
+                        for item in result.packets:
+                            assistant_packets.append(item)
+                            yield item
+                        documents_packet = packet(
+                            "search_tool_documents_delta",
+                            documents=browser_documents,
+                        )
+                        assistant_packets.append(documents_packet)
+                        yield documents_packet
+                        section_end = packet("section_end")
+                        assistant_packets.append(section_end)
+                        yield section_end
+                        assistant_documents.extend(browser_documents)
+                        step = await finish_run_step(
+                            db_session,
+                            step=step,
+                            status="completed",
+                            output_payload={"documents_found": len(browser_documents)},
+                        )
+                    except BrowserMCPError as exc:
+                        step = await finish_run_step(
+                            db_session,
+                            step=step,
+                            status="error",
+                            output_payload={"documents_found": 0},
+                            error_text=str(exc),
+                        )
+                        browser_direct_response = str(exc)
+
+            elif step_type == "browser_control":
+                if browser_service is None:
                     step = await finish_run_step(
                         db_session,
                         step=step,
-                        status="skipped",
-                        output_payload={"pages_fetched": 0},
+                        status="error",
+                        output_payload={"actions": 0},
+                        error_text="Browser service is not available.",
                     )
                 else:
-                    fetched_pages = await fetch_pages(urls[:MAX_WEB_FETCH_RESULTS])
-                    step = await finish_run_step(
-                        db_session,
-                        step=step,
-                        status="completed",
-                        output_payload={
-                            "pages_fetched": len(fetched_pages),
-                            "failed": sum(1 for page in fetched_pages if page.get("error")),
-                        },
-                    )
-
-            elif step_type == "extract_page":
-                if not fetched_pages:
-                    step = await finish_run_step(
-                        db_session,
-                        step=step,
-                        status="skipped",
-                        output_payload={"documents_extracted": 0},
-                    )
-                else:
-                    extracted_pages = [
-                        page_to_document(page=page, query=request.content, rank=index)
-                        for index, page in enumerate(fetched_pages, start=1)
-                        if page.get("html")
-                    ]
-                    assistant_documents.extend(extracted_pages)
-                    step = await finish_run_step(
-                        db_session,
-                        step=step,
-                        status="completed",
-                        output_payload={"documents_extracted": len(extracted_pages)},
-                    )
+                    try:
+                        if classification.get("browser_intent") == "open_url":
+                            result = await browser_service.open_urls(
+                                classification.get("explicit_urls") or [],
+                                query=request.content.strip(),
+                            )
+                        else:
+                            result = await browser_service.control(
+                                user_request=request.content.strip(),
+                                runtime=runtime,
+                                model_settings=model_settings,
+                                model=request.model or model_settings["default_chat_model"],
+                                temperature=request.temperature
+                                if request.temperature is not None
+                                else model_settings["temperature"],
+                            )
+                        browser_documents = result.documents
+                        browser_direct_response = result.final_response
+                        run.artifacts = {
+                            **(run.artifacts or {}),
+                            "browser_actions": result.packets,
+                            "browser_documents": browser_documents,
+                            "browser_final_response": browser_direct_response,
+                        }
+                        for item in result.packets:
+                            assistant_packets.append(item)
+                            yield item
+                        if browser_documents:
+                            documents_packet = packet(
+                                "search_tool_documents_delta",
+                                documents=browser_documents,
+                            )
+                            assistant_packets.append(documents_packet)
+                            yield documents_packet
+                            assistant_documents.extend(browser_documents)
+                        step = await finish_run_step(
+                            db_session,
+                            step=step,
+                            status="completed",
+                            output_payload={
+                                "documents_found": len(browser_documents),
+                                "final_response": bool(browser_direct_response),
+                            },
+                        )
+                    except BrowserGuardrailError as exc:
+                        browser_direct_response = str(exc)
+                        step = await finish_run_step(
+                            db_session,
+                            step=step,
+                            status="skipped",
+                            output_payload={"guardrail": str(exc)},
+                        )
+                    except BrowserMCPError as exc:
+                        browser_direct_response = str(exc)
+                        step = await finish_run_step(
+                            db_session,
+                            step=step,
+                            status="error",
+                            output_payload={"documents_found": 0},
+                            error_text=str(exc),
+                        )
 
             elif step_type == "rerank_evidence":
                 final_documents = await retrieval_index.rerank_evidence(
                     query=request.content,
-                    documents=[*local_documents, *extracted_pages],
-                    base_url=model_settings["ollama_base_url"],
+                    documents=[*local_documents, *browser_documents],
+                    base_url=model_settings["llm_base_url"],
                     embedding_model=model_settings["default_embedding_model"],
                     limit=MAX_SEARCH_RESULTS,
                 )
                 run.artifacts = {
                     **(run.artifacts or {}),
                     "evidence_pool": final_documents,
-                    "search_queries": search_queries,
                 }
                 step = await finish_run_step(
                     db_session,
@@ -820,35 +897,78 @@ async def stream_chat_packets(
                 )
 
             elif step_type == "synthesize":
-                if not final_documents:
-                    assistant_content = (
-                        "I don't have enough grounded evidence to answer that confidently. "
-                        "Try adding local files or letting the run fetch stronger web sources."
-                    )
-                    stop_reason = "insufficient_evidence"
-                    step = await finish_run_step(
-                        db_session,
-                        step=step,
-                        status="skipped",
-                        output_payload={"answer_length": 0},
-                    )
-                    continue
-
                 prompt_documents, citation_map = build_prompt_documents(final_documents)
                 messages = build_prompt_messages(
                     history,
                     current_user_content=request.content,
                     prompt_documents=prompt_documents,
                 )
-                assistant_content, captured_reasoning, synth_stop_reason = await collect_model_response(
-                    runtime=runtime,
-                    model_settings=model_settings,
-                    request=request,
-                    messages=messages,
-                    stop_event=stop_event,
-                )
-                if synth_stop_reason != "finished":
-                    stop_reason = synth_stop_reason
+                if not message_started:
+                    message_start = packet(
+                        "message_start",
+                        id=f"assistant-{request.request_id}",
+                        content="",
+                        final_documents=final_documents,
+                    )
+                    assistant_packets.append(message_start)
+                    yield message_start
+                    message_started = True
+
+                if browser_direct_response and not final_documents:
+                    assistant_content = browser_direct_response
+                    for char in assistant_content:
+                        delta_packet = packet("message_delta", content=char)
+                        assistant_packets.append(delta_packet)
+                        yield delta_packet
+                else:
+                    async for chunk in runtime.stream_chat(
+                        base_url=model_settings["llm_base_url"],
+                        model=request.model or model_settings["default_chat_model"],
+                        system_prompt=build_system_prompt(utcnow()),
+                        messages=messages,
+                        temperature=request.temperature
+                        if request.temperature is not None
+                        else model_settings["temperature"],
+                        think=should_enable_thinking(
+                            content=request.content,
+                            classification=classification,
+                            evidence_count=len(final_documents),
+                        ),
+                    ):
+                        if stop_requested(stop_event):
+                            stop_reason = "user_cancelled"
+                            break
+
+                        thinking = chunk.get("thinking", "")
+                        if thinking:
+                            captured_reasoning += thinking
+                            if not reasoning_started:
+                                reasoning_start_packet = packet("reasoning_start")
+                                assistant_packets.append(reasoning_start_packet)
+                                yield reasoning_start_packet
+                                reasoning_started = True
+                            for char in thinking:
+                                reasoning_delta_packet = packet("reasoning_delta", reasoning=char)
+                                assistant_packets.append(reasoning_delta_packet)
+                                yield reasoning_delta_packet
+
+                        content = chunk.get("content", "")
+                        if content:
+                            assistant_content += content
+                            for char in content:
+                                delta_packet = packet("message_delta", content=char)
+                                assistant_packets.append(delta_packet)
+                                yield delta_packet
+
+                if reasoning_started:
+                    reasoning_done_packet = packet("reasoning_done")
+                    reasoning_section_end_packet = packet("section_end")
+                    assistant_packets.append(reasoning_done_packet)
+                    assistant_packets.append(reasoning_section_end_packet)
+                    yield reasoning_done_packet
+                    yield reasoning_section_end_packet
+                    reasoning_started = False
+
                 step = await finish_run_step(
                     db_session,
                     step=step,
@@ -881,7 +1001,7 @@ async def stream_chat_packets(
                 else:
                     assistant_content = (
                         "I don't have enough verified evidence to answer that confidently "
-                        "from the current local and fetched sources."
+                        "from the current local sources."
                     )
                     stop_reason = "insufficient_evidence"
                     step = await finish_run_step(
@@ -903,30 +1023,32 @@ async def stream_chat_packets(
 
         prompt_documents, citation_map = build_prompt_documents(final_documents)
         if assistant_content or stop_reason in {"insufficient_evidence", "user_cancelled"}:
-            message_start = packet(
-                "message_start",
-                id=f"assistant-{request.request_id}",
-                content="",
-                final_documents=final_documents,
-            )
-            assistant_packets.append(message_start)
-            yield message_start
+            if not message_started:
+                message_start = packet(
+                    "message_start",
+                    id=f"assistant-{request.request_id}",
+                    content="",
+                    final_documents=final_documents,
+                )
+                assistant_packets.append(message_start)
+                yield message_start
+                message_started = True
 
-            if captured_reasoning:
-                reasoning_packets = [
-                    packet("reasoning_start"),
-                    packet("reasoning_delta", reasoning=captured_reasoning),
-                    packet("reasoning_done"),
-                    packet("section_end"),
-                ]
-                for item in reasoning_packets:
-                    assistant_packets.append(item)
-                    yield item
+                if captured_reasoning:
+                    reasoning_packets = [
+                        packet("reasoning_start"),
+                        packet("reasoning_delta", reasoning=captured_reasoning),
+                        packet("reasoning_done"),
+                        packet("section_end"),
+                    ]
+                    for item in reasoning_packets:
+                        assistant_packets.append(item)
+                        yield item
 
-            for chunk in chunk_text_for_stream(assistant_content):
-                delta_packet = packet("message_delta", content=chunk)
-                assistant_packets.append(delta_packet)
-                yield delta_packet
+                for char in assistant_content:
+                    delta_packet = packet("message_delta", content=char)
+                    assistant_packets.append(delta_packet)
+                    yield delta_packet
 
             citation_records = build_citation_packets(assistant_content, citation_map)
             for item in citation_records:
@@ -947,7 +1069,7 @@ async def stream_chat_packets(
         run.completed_at = utcnow()
         run.timings = {
             **(run.timings or {}),
-            "total_ms": int((run.completed_at - (run.started_at or run.completed_at)).total_seconds() * 1000),
+            "total_ms": elapsed_ms(run.started_at, run.completed_at),
         }
 
         assistant_message = ChatMessage(
@@ -1001,8 +1123,12 @@ async def lifespan(app: FastAPI):
     await init_db()
     app.state.runtime = build_runtime()
     app.state.retrieval_index = LocalRetrievalIndex()
+    app.state.browser_service = BrowserMCPService()
     app.state.stop_events = {}
-    yield
+    try:
+        yield
+    finally:
+        await app.state.browser_service.close()
 
 
 app = FastAPI(title="mlaude-workspace", lifespan=lifespan)
@@ -1023,9 +1149,9 @@ async def root() -> dict[str, str]:
 @app.get("/api/health")
 async def health(db_session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     settings = await load_model_settings(db_session)
-    runtime: BaseRuntime = app.state.runtime
+    runtime: BaseRuntime = build_runtime(settings["provider"])
     status = await runtime.check(
-        settings["ollama_base_url"],
+        settings["llm_base_url"],
         settings["default_chat_model"],
     )
     models = status.get("models", [])
@@ -1189,7 +1315,7 @@ async def upload_file(
         scope=scope,
         session_id=session_id,
         retrieval_index=retrieval_index,
-        ollama_base_url=settings["ollama_base_url"],
+        llm_base_url=settings["llm_base_url"],
         embedding_model=settings["default_embedding_model"],
     )
     return serialize_file(record)
@@ -1220,9 +1346,9 @@ async def get_model_settings_endpoint(
     db_session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     settings = await load_model_settings(db_session)
-    runtime: BaseRuntime = app.state.runtime
+    runtime: BaseRuntime = build_runtime(settings["provider"])
     health_status = await runtime.check(
-        settings["ollama_base_url"],
+        settings["llm_base_url"],
         settings["default_chat_model"],
     )
     models = health_status.get("models", [])
@@ -1237,8 +1363,8 @@ async def discover_models_endpoint(
     db_session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     settings = await load_model_settings(db_session)
-    runtime: BaseRuntime = app.state.runtime
-    target_base_url = base_url or settings["ollama_base_url"]
+    runtime: BaseRuntime = build_runtime(settings["provider"])
+    target_base_url = base_url or settings["llm_base_url"]
     try:
         models = await runtime.discover_models(target_base_url)
     except Exception:
@@ -1252,9 +1378,9 @@ async def update_model_settings_endpoint(
     db_session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     value = await save_model_settings(db_session, payload)
-    runtime: BaseRuntime = app.state.runtime
+    runtime: BaseRuntime = build_runtime(value["provider"])
     health_status = await runtime.check(
-        value["ollama_base_url"],
+        value["llm_base_url"],
         value["default_chat_model"],
     )
     models = health_status.get("models", [])
@@ -1265,6 +1391,36 @@ async def update_model_settings_endpoint(
         "models": models,
         "health": health_status,
     }
+
+
+@app.post("/api/models/load")
+async def load_model_endpoint(
+    model: str,
+    db_session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    settings = await load_model_settings(db_session)
+    runtime: BaseRuntime = build_runtime(settings["provider"])
+    return await runtime.load_model(settings["llm_base_url"], model)
+
+
+@app.post("/api/models/download")
+async def download_model_endpoint(
+    model: str,
+    db_session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    settings = await load_model_settings(db_session)
+    runtime: BaseRuntime = build_runtime(settings["provider"])
+    return await runtime.download_model(settings["llm_base_url"], model)
+
+
+@app.get("/api/models/download/{job_id}")
+async def get_download_status_endpoint(
+    job_id: str,
+    db_session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    settings = await load_model_settings(db_session)
+    runtime: BaseRuntime = build_runtime(settings["provider"])
+    return await runtime.get_download_status(settings["llm_base_url"], job_id)
 
 
 @app.post("/api/chat/stop/{request_id}")
@@ -1284,15 +1440,17 @@ async def stream_chat(request: ChatStreamRequest) -> StreamingResponse:
         stop_events[request.request_id] = stop_event
 
         async with SessionLocal() as db_session:
-            runtime: BaseRuntime = app.state.runtime
-            retrieval_index: LocalRetrievalIndex = app.state.retrieval_index
             settings = await load_model_settings(db_session)
+            runtime: BaseRuntime = build_runtime(settings["provider"])
+            retrieval_index: LocalRetrievalIndex = app.state.retrieval_index
+            browser_service: BrowserMCPService = app.state.browser_service
 
             try:
                 async for item in stream_chat_packets(
                     db_session=db_session,
                     runtime=runtime,
                     retrieval_index=retrieval_index,
+                    browser_service=browser_service,
                     stop_event=stop_event,
                     request=request,
                     model_settings=settings,

@@ -4,11 +4,9 @@ version = "0.2.0"
 description = "Personal AI agent — local, private, minimal"
 requires-python = ">=3.11"
 dependencies = [
-    "ollama>=0.6.1",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "aiosqlite>=0.20.0",
-    "asyncpg>=0.30.0",
     "sqlalchemy>=2.0.36",
     "greenlet>=3.1.1",
     "python-multipart>=0.0.20",
@@ -17,15 +15,18 @@ dependencies = [
     "python-docx>=1.2.0",
     "typer[all]>=0.9.0",
     "rich>=13.0.0",
-    "duckduckgo-search>=6.0.0",
-    "trafilatura>=1.12.2",
-    "readability-lxml>=0.8.1"
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=0.24.0",
+]
+browser = [
+    "mcp>=1.9.0",
+]
+ollama = [
+    "ollama>=0.6.1",
 ]
 
 [project.scripts]

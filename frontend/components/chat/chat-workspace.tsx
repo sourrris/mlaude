@@ -395,7 +395,7 @@ export function ChatWorkspace() {
 
             {!modelState?.health.running ? (
               <div className="mb-4 flex items-center justify-between rounded-[1.25rem] border border-dashed border-[color:var(--border-soft)] bg-white/70 px-4 py-3 text-sm text-[color:var(--text-soft)]">
-                <p>Ollama is unavailable. Configure the local runtime or use test mode for development.</p>
+                <p>Local runtime is unavailable. Configure the local runtime or use test mode for development.</p>
                 <button
                   type="button"
                   onClick={() => router.push("/settings")}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock3, FileSearch, Globe2, SearchX } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Clock3, FileSearch, Globe2, SearchX } from "lucide-react";
 
 import type { AgentRun, RunStep, SourceDocument } from "@/lib/types";
 
@@ -21,6 +21,11 @@ function statusTone(status: RunStep["status"] | AgentRun["status"]) {
 function readEvidence(run: AgentRun): SourceDocument[] {
   const value = run.artifacts?.evidence_pool;
   return Array.isArray(value) ? (value as SourceDocument[]) : [];
+}
+
+function readBrowserActions(run: AgentRun): Record<string, unknown>[] {
+  const value = run.artifacts?.browser_actions;
+  return Array.isArray(value) ? (value as Record<string, unknown>[]) : [];
 }
 
 export function RunsPanel({
@@ -44,6 +49,7 @@ export function RunsPanel({
   const selectedRun =
     visibleRuns.find((run) => run.id === selectedRunId) ?? visibleRuns[0] ?? null;
   const evidence = selectedRun ? readEvidence(selectedRun) : [];
+  const browserActions = selectedRun ? readBrowserActions(selectedRun) : [];
 
   if (!visibleRuns.length) {
     return (
@@ -194,6 +200,39 @@ export function RunsPanel({
               ))}
             </div>
           </section>
+
+          {browserActions.length > 0 ? (
+            <section className="mt-5">
+              <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--text-faint)]">
+                Browser Actions
+              </p>
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                {browserActions.slice(0, 8).map((action, index) => (
+                  <div
+                    key={`${String(action.type || "browser")}-${index}`}
+                    className="rounded-[1.25rem] border border-[color:var(--border-soft)] bg-white p-4"
+                  >
+                    <div className="flex items-start gap-3">
+                      <Bot size={16} className="mt-1 shrink-0 text-[color:var(--accent)]" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-[color:var(--text-main)]">
+                          {String(action.tool || action.type || "browser")}
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-[color:var(--text-soft)]">
+                          {String(action.summary || action.title || action.url || "Browser state captured.")}
+                        </p>
+                        {action.url ? (
+                          <p className="mt-1 break-all text-xs text-[color:var(--text-faint)]">
+                            {String(action.url)}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <section className="mt-5">
             <p className="text-xs uppercase tracking-[0.16em] text-[color:var(--text-faint)]">

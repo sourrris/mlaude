@@ -10,13 +10,9 @@ build/
 *.db
 uv.lock
 /.playwright-mcp
-mlaude-v0.1-plan.md
 .DS_Store
 frontend/node_modules/
 frontend/dist/
 frontend/.next/
 frontend/test-results/
 frontend/playwright-report/
-static/assets/
-static/index.html
-knowledge/about/master.md

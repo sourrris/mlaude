@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import {
+  Bot,
   ChevronRight,
   FileSearch,
   Globe2,
@@ -74,6 +75,25 @@ function AssistantTimeline({ packets }: { packets: AssistantPacket[] }) {
         { type: "search_tool_documents_delta" }
       > => packet.type === "search_tool_documents_delta",
     )?.documents ?? [];
+  const internetSearch = packets.some(
+    (packet) =>
+      packet.type === "search_tool_start" && packet.is_internet_search === true,
+  );
+  const browserEvents = packets.filter(
+    (
+      packet,
+    ): packet is Extract<
+      AssistantPacket,
+      | { type: "browser_tool_start" }
+      | { type: "browser_tool_result" }
+      | { type: "browser_snapshot" }
+      | { type: "browser_artifact" }
+    > =>
+      packet.type === "browser_tool_start" ||
+      packet.type === "browser_tool_result" ||
+      packet.type === "browser_snapshot" ||
+      packet.type === "browser_artifact",
+  );
 
   const fileRead =
     packets.find(
@@ -132,8 +152,12 @@ function AssistantTimeline({ packets }: { packets: AssistantPacket[] }) {
 
       {searchQueries.length > 0 ? (
         <ToolCard
-          title="Internal Search"
-          description="Searching the current chat and local knowledge library."
+          title={internetSearch ? "Web Search" : "Internal Search"}
+          description={
+            internetSearch
+              ? "Searching Google in the visible Playwright browser."
+              : "Searching the current chat and local knowledge library."
+          }
         >
           <div className="space-y-3">
             <div className="flex flex-wrap gap-2">
@@ -167,6 +191,77 @@ function AssistantTimeline({ packets }: { packets: AssistantPacket[] }) {
                 </div>
               ))}
             </div>
+          </div>
+        </ToolCard>
+      ) : null}
+
+      {browserEvents.length > 0 ? (
+        <ToolCard
+          title="Browser"
+          description="Visible Playwright browser actions and page state."
+        >
+          <div className="space-y-2">
+            {browserEvents.slice(-8).map((event, index) => {
+              if (event.type === "browser_snapshot") {
+                return (
+                  <div
+                    key={`${event.type}-${index}`}
+                    className="rounded-2xl border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] px-3 py-3"
+                  >
+                    <p className="flex items-center gap-2 text-sm font-medium text-[color:var(--text-main)]">
+                      <Globe2 size={15} />
+                      {event.title || "Current page"}
+                    </p>
+                    {event.url ? (
+                      <p className="mt-1 break-all text-xs text-[color:var(--text-faint)]">
+                        {event.url}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              }
+
+              if (event.type === "browser_artifact") {
+                return (
+                  <div
+                    key={`${event.type}-${index}`}
+                    className="rounded-2xl border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] px-3 py-3"
+                  >
+                    <p className="text-sm font-medium text-[color:var(--text-main)]">
+                      {event.title || event.kind}
+                    </p>
+                    <p className="mt-1 break-all text-xs text-[color:var(--text-faint)]">
+                      {event.path}
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={`${event.type}-${index}`}
+                  className="flex items-start gap-3 rounded-2xl border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] px-3 py-3"
+                >
+                  <Bot
+                    size={16}
+                    className="mt-1 shrink-0 text-[color:var(--accent)]"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-[color:var(--text-main)]">
+                      {event.tool}
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-[color:var(--text-soft)]">
+                      {event.summary}
+                    </p>
+                    {"url" in event && event.url ? (
+                      <p className="mt-1 break-all text-xs text-[color:var(--text-faint)]">
+                        {event.url}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </ToolCard>
       ) : null}

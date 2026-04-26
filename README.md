@@ -6,7 +6,7 @@ It runs as:
 
 - a FastAPI backend in `src/mlaude`
 - a Next.js frontend in `frontend`
-- an Ollama-backed local model runtime
+- an LM Studio-backed local model runtime (OpenAI-compatible API)
 
 The current product is focused on a single-user local workflow:
 
@@ -25,16 +25,16 @@ The current product is focused on a single-user local workflow:
 - file upload for chat-scoped files and shared library files
 - local retrieval with citations
 - source sidebar for cited and related documents
-- Ollama model discovery and default model selection
-- built-in tools for internal search, file reading, Python execution, and URL reading
+- LM Studio model discovery and default model selection
+- built-in tools for internal search, browser search/control, and file reading
 - Playwright end-to-end coverage for the main workspace flow
 
 ## Stack
 
 - Frontend: Next.js App Router, React, TypeScript, Tailwind
 - Backend: FastAPI, SQLAlchemy
-- Model runtime: Ollama
-- Storage: SQLAlchemy-backed local app database
+- Model runtime: LM Studio (OpenAI-compatible API) or Ollama (fallback)
+- Storage: SQLAlchemy-backed local app database (SQLite)
 - Retrieval: local chunked file index with citation mapping
 
 ## Repository Layout
@@ -51,7 +51,7 @@ The current product is focused on a single-user local workflow:
 - Python 3.11+
 - Node.js 20+
 - npm
-- Ollama installed locally
+- LM Studio installed locally (or Ollama as fallback)
 
 ## Setup
 
@@ -71,21 +71,13 @@ npm install
 cd ..
 ```
 
-### 3. Start Ollama
+### 3. Start LM Studio
 
-If Ollama is not already running:
+1. Open LM Studio
+2. Load a model (e.g., Gemma 4)
+3. Start the local server (default: `http://localhost:1234`)
 
-```bash
-ollama serve
-```
-
-If you want to preload a model:
-
-```bash
-ollama pull <model_name>
-```
-
-The app will automatically discover and let you choose from any models you have installed.
+The app will automatically discover and let you choose from any models loaded in LM Studio.
 
 ## Running The App
 
@@ -112,9 +104,11 @@ Open:
 - App data is stored under `.local/mlaude/` by default.
 - The backend listens on port `7474` by default.
 - The frontend talks to `http://127.0.0.1:7474` by default.
-- Ollama base URL, model selection, and temperature are managed in the Settings page.
+- LM Studio base URL, model selection, and temperature are managed in the Settings page.
 - `MLAUDE_DATABASE_URL` can be set to point SQLAlchemy at a different database.
 - `MLAUDE_HOME` can be set to move local app data somewhere else.
+- Browser automation is enabled by default with `MLAUDE_PLAYWRIGHT_ENABLED=true`.
+- Browser state persists under `<MLAUDE_HOME>/playwright/profile`, separate from your normal Chrome profile.
 
 ## Development Helpers
 
@@ -140,10 +134,21 @@ Run the backend compile check:
 
 ## Test Runtime
 
-For deterministic local testing without a live Ollama dependency:
+For deterministic local testing without a live LM Studio dependency:
 
 ```bash
 MLAUDE_ENABLE_TEST_RUNTIME=1 uv run mlaude --host 127.0.0.1 --port 7474
 ```
 
 The E2E suite uses this mode automatically for backend test startup.
+
+## Using Ollama Instead
+
+If you prefer Ollama over LM Studio, update the model settings in the Settings page
+to set provider to `ollama` and base URL to `http://127.0.0.1:11434`.
+
+Install the Ollama optional dependency:
+
+```bash
+pip install -e ".[ollama]"
+```

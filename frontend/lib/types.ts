@@ -15,6 +15,10 @@ export type PacketType =
   | "search_tool_start"
   | "search_tool_queries_delta"
   | "search_tool_documents_delta"
+  | "browser_tool_start"
+  | "browser_tool_result"
+  | "browser_snapshot"
+  | "browser_artifact"
   | "file_reader_start"
   | "file_reader_result"
   | "python_tool_start"
@@ -166,6 +170,32 @@ export type AssistantPacket =
       documents: SourceDocument[];
     }
   | {
+      type: "browser_tool_start";
+      tool: string;
+      summary: string;
+      arguments?: Record<string, unknown>;
+    }
+  | {
+      type: "browser_tool_result";
+      tool: string;
+      status: "completed" | "skipped" | "error";
+      summary: string;
+      url?: string;
+      title?: string;
+    }
+  | {
+      type: "browser_snapshot";
+      title?: string;
+      url?: string;
+      text?: string;
+    }
+  | {
+      type: "browser_artifact";
+      kind: "screenshot" | "pdf" | "trace" | "download" | string;
+      path: string;
+      title?: string;
+    }
+  | {
       type: "file_reader_start";
     }
   | {
@@ -235,7 +265,8 @@ export interface RuntimeHealth {
 }
 
 export interface ModelSettings {
-  ollama_base_url: string;
+  provider: string;
+  llm_base_url: string;
   default_chat_model: string;
   default_embedding_model: string;
   temperature: number;

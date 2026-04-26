@@ -8,9 +8,10 @@ import type { ModelSettings } from "@/lib/types";
 
 export function ModelSettingsPanel() {
   const [form, setForm] = useState<ModelSettings>({
-    ollama_base_url: "http://127.0.0.1:11434",
-    default_chat_model: "",
-    default_embedding_model: "nomic-embed-text",
+    provider: "LM Studio",
+    llm_base_url: "http://127.0.0.1:1234",
+    default_chat_model: "gemma4:e4b",
+    default_embedding_model: "text-embedding-nomic-embed-text-v1.5",
     temperature: 0.2,
   });
   const [models, setModels] = useState<string[]>([]);
@@ -39,7 +40,7 @@ export function ModelSettingsPanel() {
               ? response.health.embedding_model_available
                 ? `Connected. ${discoveredModels.length} model(s) discovered.`
                 : `Connected, but ${response.settings.default_embedding_model} is not available locally.`
-              : response.health.error || "Ollama is unavailable."
+              : response.health.error || "LLM runtime is unavailable."
           );
         }
       } finally {
@@ -56,7 +57,7 @@ export function ModelSettingsPanel() {
   }, []);
 
   async function refreshModels() {
-    const nextModels = await discoverModels(form.ollama_base_url);
+    const nextModels = await discoverModels(form.llm_base_url);
     setModels(nextModels);
     if (!nextModels.includes(form.default_chat_model) && nextModels[0]) {
       setForm((current) => ({ ...current, default_chat_model: nextModels[0] }));
@@ -74,7 +75,7 @@ export function ModelSettingsPanel() {
           ? response.health.embedding_model_available
             ? `Connected. ${discoveredModels.length} model(s) discovered.`
             : `Connected, but ${response.settings.default_embedding_model} is not available locally.`
-          : response.health.error || "Ollama is unavailable."
+          : response.health.error || "LLM runtime is unavailable."
       );
     } finally {
       setSaving(false);
@@ -86,13 +87,13 @@ export function ModelSettingsPanel() {
       <div className="panel-surface mx-auto flex w-full max-w-5xl flex-1 flex-col rounded-[2rem] px-6 py-6">
         <div className="max-w-2xl">
           <p className="text-xs uppercase tracking-[0.18em] text-[color:var(--text-faint)]">
-            Ollama Only
+            LLM Runtime
           </p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[color:var(--text-main)]">
             Local model configuration
           </h1>
           <p className="mt-3 text-sm leading-7 text-[color:var(--text-soft)]">
-            This workspace only exposes local Ollama runtime settings. Model discovery,
+            This workspace exposes local LLM runtime settings (Ollama, LM Studio, etc.). Model discovery,
             fallback handling, and the default chat and embedding models all live here.
           </p>
         </div>
@@ -102,14 +103,33 @@ export function ModelSettingsPanel() {
             <div className="grid gap-5">
               <label className="grid gap-2">
                 <span className="text-xs uppercase tracking-[0.16em] text-[color:var(--text-faint)]">
-                  Ollama Base URL
+                  Provider
                 </span>
-                <input
-                  value={form.ollama_base_url}
+                <select
+                  value={form.provider}
                   onChange={(event) =>
                     setForm((current) => ({
                       ...current,
-                      ollama_base_url: event.target.value,
+                      provider: event.target.value,
+                    }))
+                  }
+                  className="rounded-2xl border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] px-4 py-3 outline-none"
+                >
+                  <option value="ollama">Ollama</option>
+                  <option value="lm-studio">LM Studio</option>
+                </select>
+              </label>
+
+              <label className="grid gap-2">
+                <span className="text-xs uppercase tracking-[0.16em] text-[color:var(--text-faint)]">
+                  LLM Base URL
+                </span>
+                <input
+                  value={form.llm_base_url}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      llm_base_url: event.target.value,
                     }))
                   }
                   className="rounded-2xl border border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] px-4 py-3 outline-none"
@@ -230,13 +250,43 @@ export function ModelSettingsPanel() {
                 models.map((model) => (
                   <div
                     key={model}
-                    className={`rounded-[1.25rem] border px-4 py-3 text-sm ${
+                    className={`rounded-[1.25rem] border px-4 py-3 text-sm flex items-center justify-between ${
                       form.default_chat_model === model
                         ? "border-[color:var(--accent)] bg-[color:var(--accent-soft)] text-[color:var(--accent)]"
                         : "border-[color:var(--border-soft)] bg-[color:var(--bg-muted)] text-[color:var(--text-main)]"
                     }`}
                   >
                     {model}
+                    {form.provider === "lm-studio" && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            try {
+                              await fetch(`/api/models/load?model=${model}`, { method: 'POST' });
+                              alert(`Model ${model} load requested`);
+                            } catch (e) {
+                              alert('Failed to load model');
+                            }
+                          }}
+                          className="text-[10px] uppercase font-bold opacity-60 hover:opacity-100"
+                        >
+                          Load
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await fetch(`/api/models/download?model=${model}`, { method: 'POST' });
+                              alert(`Model ${model} download requested`);
+                            } catch (e) {
+                              alert('Failed to download model');
+                            }
+                          }}
+                          className="text-[10px] uppercase font-bold opacity-60 hover:opacity-100"
+                        >
+                          Download
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))
               )}

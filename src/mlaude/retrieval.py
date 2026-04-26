@@ -6,7 +6,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import ollama
+import httpx
 
 from mlaude.settings import INDEX_DIR, MAX_SEARCH_RESULTS, ensure_app_dirs
 
@@ -188,15 +188,23 @@ class LocalRetrievalIndex:
         embedding_model: str,
         texts: list[str],
     ) -> list[list[float] | None]:
+        """Embed texts via OpenAI-compatible /v1/embeddings endpoint (LM Studio)."""
         if not embedding_model.strip():
             return [None for _ in texts]
 
-        client = ollama.AsyncClient(host=base_url)
-        response = await client.embed(model=embedding_model, input=texts)
-        embeddings = [list(values) for values in response.embeddings]
-        if len(embeddings) != len(texts):
-            return [None for _ in texts]
-        return embeddings
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{base_url.rstrip('/')}/v1/embeddings",
+                json={"model": embedding_model, "input": texts},
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+            items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
+            embeddings = [item.get("embedding") for item in items]
+            if len(embeddings) != len(texts):
+                return [None for _ in texts]
+            return embeddings
 
     async def upsert_file(
         self,
