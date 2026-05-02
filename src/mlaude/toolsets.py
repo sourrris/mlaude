@@ -53,7 +53,7 @@ TOOLSETS: dict[str, dict[str, Any]] = {
     },
     "memory": {
         "description": "Persistent cross-session memory",
-        "tools": ["memory"],
+        "tools": ["memory", "session_search"],
     },
     "skills": {
         "description": "Skill management",

@@ -6,16 +6,15 @@ The agent can store and retrieve facts that persist across sessions.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 from mlaude.settings import MLAUDE_HOME
 from mlaude.tools.registry import registry, tool_error, tool_result
 
 _MEMORY_DB = MLAUDE_HOME / "data" / "memory.db"
+_MAX_MEMORIES = 500
 
 
 def _ensure_memory_db() -> sqlite3.Connection:
@@ -52,8 +51,14 @@ def _memory(action: str, key: str = "", value: str = "",
                 (uuid.uuid4().hex, key, value, category, now, now,
                  value, category, now),
             )
+            conn.execute(
+                "DELETE FROM memories WHERE id IN ("
+                "SELECT id FROM memories ORDER BY updated_at DESC LIMIT -1 OFFSET ?"
+                ")",
+                (_MAX_MEMORIES,),
+            )
             conn.commit()
-            return tool_result({"action": "stored", "key": key})
+            return tool_result({"action": "stored", "key": key, "category": category or "memory"})
 
         elif action == "recall":
             if key:

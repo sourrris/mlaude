@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any
 
 from mlaude.agent import MLaudeAgent
 from mlaude.state import SessionDB

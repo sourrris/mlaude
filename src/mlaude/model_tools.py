@@ -76,6 +76,7 @@ def handle_function_call(
         name=function_name,
         args=function_args,
         task_id=task_id,
+        enforce_safety=True,
     )
 
 

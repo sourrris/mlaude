@@ -200,6 +200,8 @@ class ToolRegistry:
         name: str,
         args: dict[str, Any],
         task_id: str | None = None,
+        approval_granted: bool = False,
+        enforce_safety: bool = False,
     ) -> str:
         """Execute a tool by name.  Returns a JSON string."""
         entry = self._tools.get(name)
@@ -212,6 +214,23 @@ class ToolRegistry:
                 f"Tool '{name}' requirements not met",
                 missing_env=missing,
             )
+
+        if enforce_safety:
+            from mlaude.safety import policy
+            decision = policy.evaluate(name, args, approval_granted=approval_granted)
+            if not decision.allowed:
+                if decision.requires_approval:
+                    return tool_error(
+                        "approval_required",
+                        tool=name,
+                        args=args,
+                        reason=decision.reason,
+                    )
+                return tool_error(
+                    f"Tool '{name}' blocked by safety policy",
+                    tool=name,
+                    reason=decision.reason,
+                )
 
         try:
             result = entry.handler(args, task_id=task_id)

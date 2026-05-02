@@ -7,8 +7,6 @@ all derive from this single source. Ported from Hermes Agent.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
-from collections.abc import Callable
 
 try:
     from prompt_toolkit.auto_suggest import AutoSuggest, Suggestion
@@ -44,6 +42,11 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("resume", "Resume a previous session", "Session", args_hint="[session_id]"),
     CommandDef("history", "Show session history", "Session"),
     CommandDef("sessions", "List all sessions", "Session"),
+    CommandDef("usage", "Show token/cost/session usage", "Session"),
+    CommandDef("compress", "Create continuation session with lineage", "Session"),
+    CommandDef("title", "Show or set current session title", "Session", args_hint="[new_title]"),
+    CommandDef("retry", "Retry last user message", "Session"),
+    CommandDef("undo", "Remove last user/assistant turn", "Session"),
     CommandDef("delete", "Delete a session", "Session", args_hint="<session_id>"),
     CommandDef("search", "Search across sessions", "Session", args_hint="<query>"),
     CommandDef("copy", "Copy last response to clipboard", "Session"),
@@ -66,6 +69,9 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("stats", "Show session statistics", "Info"),
     CommandDef("version", "Show version", "Info"),
     CommandDef("debug", "Toggle debug mode", "Info"),
+    CommandDef("busy", "Show or set busy input mode", "Info", args_hint="[on|off]"),
+    CommandDef("reasoning", "Show or set reasoning verbosity", "Info", args_hint="[low|medium|high]"),
+    CommandDef("details", "Show or set details mode", "Info", args_hint="[on|off]"),
 
     # Exit
     CommandDef("quit", "Exit mlaude", "Exit", aliases=("exit", "q", "bye")),

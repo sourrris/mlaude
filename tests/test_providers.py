@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from mlaude.providers.base import LLMResponse
-from mlaude.providers.registry import detect_provider, resolve_api_key, create_provider
+from mlaude.providers.registry import detect_provider, create_provider
 from mlaude.providers.local import LocalProvider
 from mlaude.providers.openai_provider import OpenAIProvider
 from mlaude.providers.anthropic_provider import AnthropicProvider

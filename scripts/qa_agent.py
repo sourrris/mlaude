@@ -1,3 +1,4 @@
+import argparse
 import os
 import json
 import time
@@ -26,17 +27,17 @@ Example Output:
 }
 """
 
-def query_llm(messages):
+def query_llm(messages, model=MODEL, base_url=LLM_BASE_URL, temperature=0.3, timeout=60.0):
     """Query the local LLM for the next action."""
     payload = {
-        "model": MODEL,
+        "model": model,
         "messages": messages,
-        "temperature": 0.3
+        "temperature": temperature
     }
     
     try:
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.post(f"{LLM_BASE_URL}/chat/completions", json=payload)
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(f"{base_url}/chat/completions", json=payload)
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
             
@@ -61,7 +62,13 @@ def log_flaw(flaw):
     with open("qa_flaws_log.md", "a") as f:
         f.write(f"- {flaw}\n")
 
-def run_qa_loop(max_iterations=100):
+def run_qa_loop(
+    max_iterations=100,
+    model=MODEL,
+    base_url=LLM_BASE_URL,
+    temperature=0.3,
+    timeout=60.0,
+):
     print("Starting Autonomous QA Agent...")
     
     # Ensure log file exists
@@ -86,7 +93,13 @@ def run_qa_loop(max_iterations=100):
             # Ask LLM for next move
             messages.append({"role": "user", "content": f"Terminal Output:\n{terminal_output}"})
             
-            response_json = query_llm(messages)
+            response_json = query_llm(
+                messages,
+                model=model,
+                base_url=base_url,
+                temperature=temperature,
+                timeout=timeout,
+            )
             
             flaw = response_json.get("flaw_found")
             next_cmd = response_json.get("next_command", "/version")
@@ -113,5 +126,46 @@ def run_qa_loop(max_iterations=100):
         child.close()
         print("\nQA Session Completed.")
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Autonomous QA loop for mlaude CLI.")
+    parser.add_argument(
+        "-n",
+        "--iterations",
+        type=int,
+        default=5,
+        help="Number of QA turns to execute (default: 5).",
+    )
+    parser.add_argument(
+        "--model",
+        default=MODEL,
+        help=f"Model name for QA LLM (default: {MODEL}).",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=LLM_BASE_URL,
+        help=f"OpenAI-compatible base URL for QA LLM (default: {LLM_BASE_URL}).",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.3,
+        help="Sampling temperature for QA LLM (default: 0.3).",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=60.0,
+        help="HTTP timeout seconds for QA LLM requests (default: 60.0).",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    run_qa_loop(5) # Run 5 turns for initial testing
+    args = parse_args()
+    run_qa_loop(
+        max_iterations=args.iterations,
+        model=args.model,
+        base_url=args.base_url,
+        temperature=args.temperature,
+        timeout=args.timeout,
+    )

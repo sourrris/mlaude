@@ -6,7 +6,6 @@ streaming-style responses.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -28,7 +27,6 @@ class TelegramAdapter(PlatformAdapter):
 
     async def start(self) -> None:
         try:
-            from telegram import Update
             from telegram.ext import (
                 ApplicationBuilder,
                 CommandHandler,

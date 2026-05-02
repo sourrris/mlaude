@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import unittest
 
 from mlaude.tools.registry import ToolRegistry, tool_error, tool_result

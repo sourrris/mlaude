@@ -6,7 +6,6 @@ Uses the OpenAI-compatible API at ``api.groq.com/openai/v1``.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from mlaude.providers.local import LocalProvider
 

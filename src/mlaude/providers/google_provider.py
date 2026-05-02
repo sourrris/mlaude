@@ -42,7 +42,7 @@ class GoogleProvider(BaseProvider):
     ) -> LLMResponse:
         """Use the OpenAI-compatible endpoint Google provides."""
         # Google offers an OpenAI-compat endpoint
-        url = f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         payload: dict[str, Any] = {
             "model": model or self.default_model,
             "messages": messages,
@@ -84,7 +84,7 @@ class GoogleProvider(BaseProvider):
         temperature: float = 0.2,
         **kwargs: Any,
     ) -> Iterator[dict]:
-        url = f"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         payload: dict[str, Any] = {
             "model": model or self.default_model,
             "messages": messages,

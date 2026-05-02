@@ -6,7 +6,6 @@ handle a subtask in isolation, then return the result.
 
 from __future__ import annotations
 
-import json
 import logging
 
 from mlaude.tools.registry import registry, tool_error, tool_result

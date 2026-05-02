@@ -205,7 +205,7 @@ def create_provider(
     # Default: local (LM Studio / Ollama / any OpenAI-compat)
     from mlaude.providers.local import LocalProvider
     return LocalProvider(
-        base_url=base_url or "http://127.0.0.1:1234",
+        base_url=base_url or "http://127.0.0.1:11434",
         api_key=key,
         default_model=default_model,
         **kwargs,

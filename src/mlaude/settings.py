@@ -21,7 +21,7 @@ SKINS_DIR = MLAUDE_HOME / "skins"
 CONFIG_FILE = MLAUDE_HOME / "config.yaml"
 
 # ── LLM ────────────────────────────────────────────────────────────────────
-LLM_BASE_URL = os.environ.get("MLAUDE_LLM_BASE_URL", "http://127.0.0.1:1234")
+LLM_BASE_URL = os.environ.get("MLAUDE_LLM_BASE_URL", "http://127.0.0.1:11434")
 DEFAULT_CHAT_MODEL = os.environ.get("MLAUDE_DEFAULT_CHAT_MODEL", "gemma4:e4b")
 DEFAULT_TEMPERATURE = float(os.environ.get("MLAUDE_DEFAULT_TEMPERATURE", "0.2"))
 
@@ -33,9 +33,18 @@ MAX_FILE_READ_CHARS = int(os.environ.get("MLAUDE_MAX_FILE_READ_CHARS", "16000"))
 TERMINAL_TIMEOUT_SECONDS = int(
     os.environ.get("MLAUDE_TERMINAL_TIMEOUT_SECONDS", "120")
 )
+TERMINAL_BACKEND = os.environ.get("MLAUDE_TERMINAL_BACKEND", "local")
+TERMINAL_CWD = os.environ.get("MLAUDE_TERMINAL_CWD", "")
 PYTHON_TOOL_TIMEOUT_SECONDS = int(
     os.environ.get("MLAUDE_PYTHON_TOOL_TIMEOUT_SECONDS", "12")
 )
+SAFETY_APPROVAL_MODE = os.environ.get("MLAUDE_SAFETY_APPROVAL_MODE", "ask")
+SAFETY_COMMAND_ALLOWLIST = [
+    s.strip() for s in os.environ.get("MLAUDE_SAFETY_COMMAND_ALLOWLIST", "").split(",") if s.strip()
+]
+SAFETY_PATH_ROOTS = [
+    s.strip() for s in os.environ.get("MLAUDE_SAFETY_PATH_ROOTS", "").split(",") if s.strip()
+]
 
 DEFAULT_SYSTEM_PROMPT = os.environ.get(
     "MLAUDE_SYSTEM_PROMPT",

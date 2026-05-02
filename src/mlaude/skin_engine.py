@@ -73,8 +73,8 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         "branding": {
             "agent_name": "mlaude",
             "welcome": "Welcome to mlaude! Type your message or /help for commands.",
-            "goodbye": "Goodbye! ☠",
-            "response_label": " ☠ mlaude ",
+            "goodbye": "Goodbye! 💀",
+            "response_label": " 💀 mlaude ",
             "prompt_symbol": "❯ ",
             "help_header": "(^_^)? Available Commands",
         },
@@ -152,8 +152,8 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         "branding": {
             "agent_name": "mlaude",
             "welcome": "Welcome to mlaude! Type your message or /help for commands.",
-            "goodbye": "Goodbye! ☠",
-            "response_label": " ☠ mlaude ",
+            "goodbye": "Goodbye! 💀",
+            "response_label": " 💀 mlaude ",
             "prompt_symbol": "❯ ",
             "help_header": "[?] Available Commands",
         },
@@ -184,8 +184,8 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         "branding": {
             "agent_name": "mlaude",
             "welcome": "Welcome to mlaude! Type your message or /help for commands.",
-            "goodbye": "Goodbye! ☠",
-            "response_label": " ☠ mlaude ",
+            "goodbye": "Goodbye! 💀",
+            "response_label": " 💀 mlaude ",
             "prompt_symbol": "❯ ",
             "help_header": "(^_^)? Available Commands",
         },
@@ -292,7 +292,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         "spinner": {},
         "branding": {
             "agent_name": "mlaude",
-            "response_label": " ☠ mlaude ",
+            "response_label": " 💀 mlaude ",
             "prompt_symbol": "❯ ",
             "help_header": "[?] Available Commands",
         },
@@ -312,7 +312,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         "spinner": {},
         "branding": {
             "agent_name": "mlaude",
-            "response_label": " ☠ mlaude ",
+            "response_label": " 💀 mlaude ",
             "prompt_symbol": "❯ ",
             "help_header": "(^_^)? Available Commands",
         },
@@ -463,9 +463,6 @@ def get_prompt_toolkit_style_overrides() -> Dict[str, str]:
     title = skin.get_color("banner_title", "#FFD700")
     text = skin.get_color("banner_text", prompt)
     dim = skin.get_color("banner_dim", "#555555")
-    label = skin.get_color("ui_label", title)
-    warn = skin.get_color("ui_warn", "#FF8C00")
-    error = skin.get_color("ui_error", "#FF6B6B")
     status_bg = skin.get_color("status_bar_bg", "#1a1a2e")
     accent = skin.get_color("ui_accent", "#FFBF00")
 

@@ -6,9 +6,6 @@ can create, read, and use to improve its capabilities over time.
 
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
 
 from mlaude.settings import SKILLS_DIR
 from mlaude.tools.registry import registry, tool_error, tool_result

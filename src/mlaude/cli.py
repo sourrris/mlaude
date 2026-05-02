@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 import signal
 import sys
 
@@ -20,12 +21,10 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
 from mlaude.agent import MLaudeAgent
 from mlaude.banner import VERSION, build_welcome_banner, prefetch_update_check
 from mlaude.commands import (
-    COMMANDS,
     COMMANDS_BY_CATEGORY,
     resolve_command,
     SlashCommandCompleter,
@@ -43,6 +42,7 @@ from mlaude.settings import (
     save_config_value,
 )
 from mlaude.state import SessionDB
+from mlaude.safety import policy as safety_policy
 
 app = typer.Typer(name="mlaude", invoke_without_command=True)
 console = Console()
@@ -251,9 +251,14 @@ def main(
     model: str = typer.Option(DEFAULT_CHAT_MODEL, "--model", "-m", help="Model to use"),
     base_url: str = typer.Option(LLM_BASE_URL, "--base-url", help="LLM API base URL"),
     temperature: float = typer.Option(DEFAULT_TEMPERATURE, "--temperature", "-t", help="Temperature"),
-    one_shot: str = typer.Option(None, "--message", "-c", help="One-shot message (non-interactive)"),
+    one_shot: str = typer.Option(None, "--message", "-M", help="One-shot message (non-interactive)"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress status output"),
     session: str = typer.Option(None, "--session", "-s", help="Resume a session by ID"),
+    resume: str = typer.Option(None, "--resume", "-r", help="Resume a session by ID"),
+    continue_last: bool = typer.Option(False, "--continue", "-c", help="Continue most recent session"),
+    tui: bool = typer.Option(False, "--tui", help="Launch TUI (fallback to classic CLI if unavailable)"),
+    tui_dev: bool = typer.Option(False, "--tui-dev", help="Launch TUI in dev mode (fallback if unavailable)"),
+    yolo: bool = typer.Option(False, "--yolo", help="Disable approval prompts for risky tools"),
     provider: str = typer.Option(None, "--provider", "-p", help="Provider override"),
     debug: bool = typer.Option(False, "--debug", help="Enable debug logging"),
     skin: str = typer.Option(None, "--skin", help="Skin theme to use"),
@@ -266,6 +271,7 @@ def main(
         logging.basicConfig(level=logging.DEBUG)
 
     ensure_app_dirs()
+    safety_policy.set_yolo(yolo)
 
     # Load config and initialize skin
     config = load_config()
@@ -279,6 +285,13 @@ def main(
     prefetch_update_check()
 
     db = SessionDB()
+    if tui or tui_dev:
+        from mlaude.tui_gateway.launcher import can_launch_tui
+        ok, reason = can_launch_tui()
+        if not ok:
+            console.print(f"[dim]TUI unavailable ({reason}); falling back to classic CLI.[/dim]")
+        else:
+            console.print("[dim]TUI runtime scaffold is present, but frontend is not bundled yet; using classic CLI.[/dim]")
 
     # Discover tools
     tool_count = discover_tools()
@@ -294,17 +307,24 @@ def main(
 
     # Resume session if specified
     conversation_history: list[dict] = []
-    if session:
-        history = db.get_openai_messages(session)
+    resume_id = resume or session
+    if continue_last and not resume_id:
+        recent = db.list_sessions(limit=1)
+        if recent:
+            resume_id = recent[0]["id"]
+
+    if resume_id:
+        resolved = db.resolve_session_id(resume_id) or resume_id
+        history = db.get_openai_messages(resolved)
         if history:
             conversation_history = [m for m in history if m.get("role") != "system"]
-            agent.session_id = session
-            console.print(f"[dim]Resumed session {session[:12]}… ({len(history)} messages)[/dim]")
+            agent.session_id = resolved
+            console.print(f"[dim]Resumed session {resolved[:12]}… ({len(history)} messages)[/dim]")
         else:
-            console.print(f"[dim]Session {session} not found, starting new.[/dim]")
+            console.print(f"[dim]Session {resume_id} not found, starting new.[/dim]")
 
     # Create DB session
-    if not session:
+    if not resume_id:
         db.create_session(
             session_id=agent.session_id,
             platform="cli",
@@ -315,10 +335,13 @@ def main(
     if one_shot:
         spinner = Spinner()
         spinner.start("thinking")
-        response = agent.chat(one_shot)
+        result = agent.run_conversation(one_shot)
         spinner.stop()
+        response = result.get("final_response", "")
         if response:
             console.print(Markdown(response))
+        if str(result.get("stop_reason", "")).startswith("error:"):
+            raise typer.Exit(code=1)
         return
 
     # Interactive mode — print banner
@@ -387,6 +410,10 @@ def main(
 
     debug_mode = debug
     current_provider = provider
+    details_mode = bool(config.get("display", {}).get("details_mode", False))
+    busy_mode = str(config.get("display", {}).get("busy_input_mode", "off"))
+    reasoning_mode = "medium"
+    last_user_input = ""
 
     while True:
         try:
@@ -485,6 +512,45 @@ def main(
 
             elif canonical == "sessions":
                 _show_sessions(db)
+                continue
+            elif canonical == "usage":
+                s = db.get_session(agent.session_id) or {}
+                console.print(
+                    f"  [bold]Session:[/bold] {agent.session_id[:12]}…  "
+                    f"[bold]Tokens:[/bold] {s.get('total_tokens', 0):,}  "
+                    f"[bold]Cost:[/bold] ${float(s.get('total_cost', 0.0)):.4f}"
+                )
+                continue
+            elif canonical == "compress":
+                source_id = agent.session_id
+                new_sid = db.create_continuation_session(source_id)
+                agent.session_id = new_sid
+                conversation_history = []
+                console.print(
+                    f"[dim]Compressed context into new continuation session {new_sid[:12]}… "
+                    f"(parent {source_id[:12]}…)[/dim]"
+                )
+                continue
+            elif canonical == "title":
+                if args_str.strip():
+                    db.update_session_title(agent.session_id, args_str.strip())
+                    console.print("[dim]Session title updated.[/dim]")
+                else:
+                    s = db.get_session(agent.session_id) or {}
+                    console.print(f"[dim]Title: {s.get('title', '') or '(untitled)'}[/dim]")
+                continue
+            elif canonical == "retry":
+                if last_user_input:
+                    user_input = last_user_input
+                else:
+                    console.print("[dim]No prior user message to retry.[/dim]")
+                    continue
+            elif canonical == "undo":
+                if len(conversation_history) >= 2:
+                    conversation_history = conversation_history[:-2]
+                    console.print("[dim]Removed last conversation turn from in-memory context.[/dim]")
+                else:
+                    console.print("[dim]Not enough context to undo.[/dim]")
                 continue
 
             elif canonical == "resume":
@@ -591,6 +657,23 @@ def main(
                 logging.getLogger("mlaude").setLevel(level)
                 console.print(f"[dim]Debug: {'on' if debug_mode else 'off'}[/dim]")
                 continue
+            elif canonical == "busy":
+                if args_str.strip() in {"on", "off"}:
+                    busy_mode = args_str.strip()
+                    save_config_value("display.busy_input_mode", busy_mode)
+                console.print(f"[dim]Busy input mode: {busy_mode}[/dim]")
+                continue
+            elif canonical == "reasoning":
+                if args_str.strip() in {"low", "medium", "high"}:
+                    reasoning_mode = args_str.strip()
+                console.print(f"[dim]Reasoning mode: {reasoning_mode}[/dim]")
+                continue
+            elif canonical == "details":
+                if args_str.strip() in {"on", "off"}:
+                    details_mode = args_str.strip() == "on"
+                    save_config_value("display.details_mode", details_mode)
+                console.print(f"[dim]Details mode: {'on' if details_mode else 'off'}[/dim]")
+                continue
 
             elif canonical == "system":
                 if args_str:
@@ -636,6 +719,7 @@ def main(
         agent.on_tool_end = on_tool_end
 
         spinner.start()
+        last_user_input = user_input
 
         try:
             result = agent.run_conversation(
@@ -654,10 +738,12 @@ def main(
             # Skin-aware response panel
             from mlaude.skin_engine import get_active_skin
             skin = get_active_skin()
-            response_label = skin.get_branding("response_label", " ☠ mlaude ")
+            response_label = skin.get_branding("response_label", " 💀 mlaude ")
             response_border = skin.get_color("response_border", "#FFD700")
 
             console.print()
+            if details_mode:
+                console.print(f"[dim]reasoning={reasoning_mode} busy={busy_mode}[/dim]")
             console.print(
                 Panel(
                     Markdown(final),
@@ -681,6 +767,36 @@ def main(
                 role="assistant",
                 content=final,
             )
+        # Retry once with explicit approval for blocked risky tools.
+        if not final:
+            msgs = result.get("messages", [])
+            blocked = None
+            for m in reversed(msgs):
+                if m.get("role") == "tool":
+                    try:
+                        payload = json.loads(m.get("content") or "{}")
+                    except Exception:
+                        payload = {}
+                    if payload.get("error") == "approval_required":
+                        blocked = payload
+                        break
+            if blocked:
+                tool = blocked.get("tool", "tool")
+                console.print(f"[yellow]Approval required for {tool}.[/yellow] Run once? [y/N]")
+                try:
+                    resp = prompt_session.prompt([("class:prompt", "approve> ")]).strip().lower()
+                except Exception:
+                    resp = "n"
+                if resp in {"y", "yes"}:
+                    from mlaude.tools.registry import registry
+                    manual = registry.dispatch(
+                        tool,
+                        blocked.get("args", {}),
+                        task_id=agent.session_id,
+                        approval_granted=True,
+                        enforce_safety=True,
+                    )
+                    console.print(format_tool_end(tool, manual))
 
         # Auto-title on first user message
         if len(conversation_history) == 0 and final:

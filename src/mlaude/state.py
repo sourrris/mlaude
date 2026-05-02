@@ -82,6 +82,8 @@ class SessionDB:
                     title TEXT DEFAULT '',
                     platform TEXT DEFAULT 'cli',
                     model TEXT DEFAULT '',
+                    parent_session_id TEXT,
+                    root_session_id TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     ended_at TEXT,
@@ -119,6 +121,16 @@ class SessionDB:
             except sqlite3.OperationalError:
                 pass  # FTS5 may not be available on all builds
 
+            # Best-effort migrations for older DBs
+            for col_def in (
+                "parent_session_id TEXT",
+                "root_session_id TEXT",
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE sessions ADD COLUMN {col_def}")
+                except sqlite3.OperationalError:
+                    pass
+
         self._write_with_retry(_create)
 
     # ------------------------------------------------------------------
@@ -131,15 +143,18 @@ class SessionDB:
         platform: str = "cli",
         model: str = "",
         title: str = "",
+        parent_session_id: str | None = None,
     ) -> str:
         sid = session_id or uuid.uuid4().hex
         now = _now_iso()
+        root_session_id = parent_session_id or sid
 
         def _insert(conn):
             conn.execute(
-                "INSERT INTO sessions (id, title, platform, model, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (sid, title, platform, model, now, now),
+                "INSERT INTO sessions "
+                "(id, title, platform, model, parent_session_id, root_session_id, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (sid, title, platform, model, parent_session_id, root_session_id, now, now),
             )
             return sid
 
@@ -186,6 +201,28 @@ class SessionDB:
             return [dict(r) for r in rows]
         finally:
             conn.close()
+
+    def resolve_session_id(self, session_id_prefix: str) -> str | None:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT id FROM sessions WHERE id LIKE ? ORDER BY updated_at DESC LIMIT 1",
+                (f"{session_id_prefix}%",),
+            ).fetchone()
+            return str(row["id"]) if row else None
+        finally:
+            conn.close()
+
+    def create_continuation_session(self, source_session_id: str, title: str = "") -> str:
+        source = self.get_session(source_session_id)
+        if source is None:
+            raise ValueError(f"Session not found: {source_session_id}")
+        return self.create_session(
+            platform=source.get("platform", "cli"),
+            model=source.get("model", ""),
+            title=title or source.get("title", ""),
+            parent_session_id=source_session_id,
+        )
 
     def update_session_title(self, session_id: str, title: str) -> None:
         def _update(conn):

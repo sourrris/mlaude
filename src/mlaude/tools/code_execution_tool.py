@@ -5,12 +5,10 @@ Runs Python code in a subprocess with timeout and output capture.
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
 
 from mlaude.settings import PYTHON_TOOL_TIMEOUT_SECONDS
 from mlaude.tools.registry import registry, tool_error, tool_result

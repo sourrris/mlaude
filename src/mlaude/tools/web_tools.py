@@ -5,10 +5,8 @@ Registered via the tool registry for auto-discovery.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
-from typing import Any
 from urllib.parse import quote_plus
 
 from mlaude.tools.registry import registry, tool_error, tool_result

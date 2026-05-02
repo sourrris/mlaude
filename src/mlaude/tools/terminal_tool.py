@@ -5,14 +5,12 @@ Registered via the tool registry for auto-discovery.
 
 from __future__ import annotations
 
-import json
 import os
-import signal
 import subprocess
 import threading
 from pathlib import Path
 
-from mlaude.settings import TERMINAL_TIMEOUT_SECONDS
+from mlaude.settings import TERMINAL_TIMEOUT_SECONDS, TERMINAL_BACKEND, TERMINAL_CWD
 from mlaude.tools.registry import registry, tool_error, tool_result
 
 # ---------------------------------------------------------------------------
@@ -28,7 +26,7 @@ def get_cwd() -> str:
     global _cwd
     with _cwd_lock:
         if _cwd is None:
-            _cwd = os.getcwd()
+            _cwd = TERMINAL_CWD or os.getcwd()
         return _cwd
 
 
@@ -68,6 +66,13 @@ def _terminal(
 
     env = os.environ.copy()
     env["PAGER"] = "cat"  # Avoid interactive pagers
+
+    backend = TERMINAL_BACKEND.lower()
+    if backend in {"docker", "ssh"}:
+        return tool_error(
+            f"Terminal backend '{backend}' is configured but not implemented in this milestone.",
+            backend=backend,
+        )
 
     try:
         result = subprocess.run(
