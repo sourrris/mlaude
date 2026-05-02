@@ -1,7 +1,7 @@
 """Slash command registry, autocomplete, and definitions.
 
 Central registry for all slash commands — CLI, gateway, and autocomplete
-all derive from this single source. Ported from Hermes Agent.
+all derive from this single source. 
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ def resolve_command(text: str) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Rich autocomplete — Hermes-style slash command completer
+# Rich autocomplete — slash command completer
 # ---------------------------------------------------------------------------
 
 

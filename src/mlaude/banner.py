@@ -1,6 +1,4 @@
 """Welcome banner, ASCII art, and update check for the CLI.
-
-Ported from Hermes Agent's banner.py — pure display functions.
 """
 
 import json

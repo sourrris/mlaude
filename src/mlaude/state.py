@@ -1,6 +1,6 @@
 """SQLite session store with WAL mode and FTS5 search.
 
-Inspired by Hermes ``hermes_state.py``.  Provides persistent storage for
+Provides persistent storage for
 agent sessions, messages, and full-text search across conversation history.
 
 All operations are synchronous (thread-safe via write lock + jitter retry).

@@ -1,9 +1,5 @@
 """Display utilities — kawaii spinner, tool formatting, token usage.
-
-Ported from Hermes Agent's display system with full skin integration,
-wing decorations, and rotating verb/face support.
 """
-
 from __future__ import annotations
 
 import itertools

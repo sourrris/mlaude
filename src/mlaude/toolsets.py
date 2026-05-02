@@ -1,6 +1,5 @@
 """Toolset definitions — which tools are available on which platforms.
 
-Inspired by Hermes ``toolsets.py``.
 """
 
 from __future__ import annotations

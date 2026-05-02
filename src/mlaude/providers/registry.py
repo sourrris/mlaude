@@ -1,7 +1,7 @@
 """Provider registry — auto-detection, instantiation, and failover.
 
 Expanded with NVIDIA, DeepSeek, Groq, Together, Google Gemini, HuggingFace
-providers plus Hermes-style aliases.
+providers plus aliases.
 """
 
 from __future__ import annotations

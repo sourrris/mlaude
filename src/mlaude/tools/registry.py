@@ -1,6 +1,6 @@
 """Tool registry — auto-discovery, schema management, and dispatch.
 
-Inspired by Hermes ``tools/registry.py``.  Provides a singleton
+Provides a singleton
 ``ToolRegistry`` that tools self-register into at import time.
 
 Usage in a tool file::

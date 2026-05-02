@@ -1,6 +1,6 @@
 """Tool orchestration layer — bridges the agent loop and the tool registry.
 
-Inspired by Hermes ``model_tools.py``.  Provides:
+Provides:
 
 - ``get_tool_definitions()`` — returns OpenAI-format tool schemas
 - ``handle_function_call()`` — dispatches a tool call and returns a JSON string

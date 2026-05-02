@@ -4,8 +4,6 @@ This is the heart of mlaude — a multi-turn agent that calls LLM APIs using
 the OpenAI tool_calls protocol and loops until the model produces a final
 text response or the iteration budget is exhausted.
 
-Inspired by the Hermes ``AIAgent`` class (``run_agent.py``).
-
 Usage::
 
     from mlaude.agent import MLaudeAgent

@@ -1,6 +1,6 @@
 """mlaude CLI skin/theme engine.
 
-Data-driven skin system ported from Hermes Agent. Skins customize the CLI's
+Skins customize the CLI's
 visual appearance — colors, spinner, branding, tool display. User skins are
 YAML files in ~/.mlaude/skins/. No code changes needed to add a new skin.
 """

@@ -11,7 +11,7 @@ def _truthy(value: str | None) -> bool:
 # ── Paths ──────────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# ~/.mlaude is the canonical home (like Hermes's ~/.hermes)
+# ~/.mlaude is the canonical home 
 MLAUDE_HOME = Path(os.environ.get("MLAUDE_HOME", Path.home() / ".mlaude"))
 
 DATA_DIR = MLAUDE_HOME / "data"

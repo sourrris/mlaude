@@ -1,8 +1,7 @@
-"""CLI entry point — Hermes-style interactive agent.
+"""CLI entry point 
 
 Full interactive CLI with Rich panels, animated spinners, slash command
 autocomplete, session management, skin engine, and tool activity display.
-Faithful port of the Hermes Agent CLI experience.
 """
 
 from __future__ import annotations
