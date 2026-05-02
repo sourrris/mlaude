@@ -1,7 +1,7 @@
 """Provider registry — auto-detection, instantiation, and failover.
 
-Detects the appropriate provider from the base URL or explicit config,
-manages API keys, and supports failover chains.
+Expanded with NVIDIA, DeepSeek, Groq, Together, Google Gemini, HuggingFace
+providers plus Hermes-style aliases.
 """
 
 from __future__ import annotations
@@ -20,39 +20,78 @@ logger = logging.getLogger(__name__)
 # Provider auto-detection
 # ---------------------------------------------------------------------------
 
-# Known cloud provider patterns
 _CLOUD_PATTERNS: dict[str, str] = {
     "api.openai.com": "openai",
     "api.anthropic.com": "anthropic",
     "openrouter.ai": "openrouter",
     "generativelanguage.googleapis.com": "google",
+    "integrate.api.nvidia.com": "nvidia",
+    "api.deepseek.com": "deepseek",
+    "api.groq.com": "groq",
+    "api.together.xyz": "together",
+    "api-inference.huggingface.co": "huggingface",
 }
 
-# Local server patterns
 _LOCAL_PATTERNS = {"localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"}
+
+# Aliases — maps human-friendly names to canonical provider IDs
+ALIASES: dict[str, str] = {
+    # nvidia
+    "nim": "nvidia",
+    "nvidia-nim": "nvidia",
+    "build-nvidia": "nvidia",
+    "nemotron": "nvidia",
+    # deepseek
+    "deep-seek": "deepseek",
+    # groq
+    "groqcloud": "groq",
+    # together
+    "together-ai": "together",
+    "togetherai": "together",
+    # google
+    "gemini": "google",
+    "google-gemini": "google",
+    # huggingface
+    "hf": "huggingface",
+    "hugging-face": "huggingface",
+    # openai
+    "gpt": "openai",
+    "chatgpt": "openai",
+    # anthropic
+    "claude": "anthropic",
+    # openrouter
+    "or": "openrouter",
+    # local
+    "lmstudio": "local",
+    "lm-studio": "local",
+    "ollama": "local",
+    "vllm": "local",
+    "llamacpp": "local",
+    "llama.cpp": "local",
+}
+
+
+def normalize_provider(name: str) -> str:
+    """Resolve aliases and normalise casing to a canonical provider id."""
+    key = name.strip().lower()
+    return ALIASES.get(key, key)
 
 
 def detect_provider(base_url: str) -> str:
-    """Auto-detect provider from a base URL.
-
-    Returns one of: 'local', 'openai', 'anthropic', 'openrouter', 'google'.
-    """
+    """Auto-detect provider from a base URL."""
     if not base_url:
         return "local"
 
     parsed = urlparse(base_url)
     host = (parsed.hostname or "").lower()
 
-    # Check cloud patterns first
     for pattern, provider in _CLOUD_PATTERNS.items():
         if pattern in host:
             return provider
 
-    # Local patterns
     if host in _LOCAL_PATTERNS or host.endswith(".local"):
         return "local"
 
-    # Default to local for unknown URLs (likely a proxy or custom endpoint)
     return "local"
 
 
@@ -65,24 +104,46 @@ _KEY_ENV_VARS: dict[str, list[str]] = {
     "anthropic": ["ANTHROPIC_API_KEY"],
     "openrouter": ["OPENROUTER_API_KEY"],
     "google": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+    "nvidia": ["NVIDIA_API_KEY", "NGC_API_KEY"],
+    "deepseek": ["DEEPSEEK_API_KEY"],
+    "groq": ["GROQ_API_KEY"],
+    "together": ["TOGETHER_API_KEY"],
+    "huggingface": ["HF_TOKEN", "HUGGINGFACE_API_KEY"],
     "local": ["MLAUDE_API_KEY"],
 }
 
 
 def resolve_api_key(provider: str, explicit_key: str = "") -> str:
-    """Resolve an API key for a provider.
-
-    Priority: explicit key → env var → empty string.
-    """
     if explicit_key:
         return explicit_key
-
     for var in _KEY_ENV_VARS.get(provider, []):
         val = os.environ.get(var, "").strip()
         if val:
             return val
-
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Provider display labels
+# ---------------------------------------------------------------------------
+
+PROVIDER_LABELS: dict[str, str] = {
+    "local": "Local (LM Studio / Ollama)",
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "openrouter": "OpenRouter",
+    "google": "Google Gemini",
+    "nvidia": "NVIDIA NIM",
+    "deepseek": "DeepSeek",
+    "groq": "Groq",
+    "together": "Together AI",
+    "huggingface": "HuggingFace",
+}
+
+
+def get_provider_label(provider: str) -> str:
+    canonical = normalize_provider(provider)
+    return PROVIDER_LABELS.get(canonical, canonical)
 
 
 # ---------------------------------------------------------------------------
@@ -97,38 +158,49 @@ def create_provider(
     default_model: str = "",
     **kwargs: Any,
 ) -> BaseProvider:
-    """Create a provider instance.
-
-    If ``provider`` is not specified, auto-detects from ``base_url``.
-    """
+    """Create a provider instance."""
     if provider is None:
         provider = detect_provider(base_url)
+    else:
+        provider = normalize_provider(provider)
 
     key = resolve_api_key(provider, api_key)
 
     if provider == "openai":
         from mlaude.providers.openai_provider import OpenAIProvider
-        return OpenAIProvider(
-            api_key=key,
-            default_model=default_model or "gpt-4o",
-            **kwargs,
-        )
+        return OpenAIProvider(api_key=key, default_model=default_model or "gpt-4o", **kwargs)
 
     if provider == "anthropic":
         from mlaude.providers.anthropic_provider import AnthropicProvider
-        return AnthropicProvider(
-            api_key=key,
-            default_model=default_model or "claude-sonnet-4-20250514",
-            **kwargs,
-        )
+        return AnthropicProvider(api_key=key, default_model=default_model or "claude-sonnet-4-20250514", **kwargs)
 
     if provider == "openrouter":
         from mlaude.providers.openrouter_provider import OpenRouterProvider
-        return OpenRouterProvider(
-            api_key=key,
-            default_model=default_model or "openai/gpt-4o",
-            **kwargs,
-        )
+        return OpenRouterProvider(api_key=key, default_model=default_model or "openai/gpt-4o", **kwargs)
+
+    if provider == "nvidia":
+        from mlaude.providers.nvidia_provider import NvidiaProvider
+        return NvidiaProvider(api_key=key, default_model=default_model or "meta/llama-3.1-8b-instruct", **kwargs)
+
+    if provider == "deepseek":
+        from mlaude.providers.deepseek_provider import DeepSeekProvider
+        return DeepSeekProvider(api_key=key, default_model=default_model or "deepseek-chat", **kwargs)
+
+    if provider == "groq":
+        from mlaude.providers.groq_provider import GroqProvider
+        return GroqProvider(api_key=key, default_model=default_model or "llama-3.1-8b-instant", **kwargs)
+
+    if provider == "together":
+        from mlaude.providers.together_provider import TogetherProvider
+        return TogetherProvider(api_key=key, default_model=default_model or "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", **kwargs)
+
+    if provider == "google":
+        from mlaude.providers.google_provider import GoogleProvider
+        return GoogleProvider(api_key=key, default_model=default_model or "gemini-2.0-flash", **kwargs)
+
+    if provider == "huggingface":
+        from mlaude.providers.huggingface_provider import HuggingFaceProvider
+        return HuggingFaceProvider(api_key=key, default_model=default_model or "meta-llama/Meta-Llama-3.1-8B-Instruct", **kwargs)
 
     # Default: local (LM Studio / Ollama / any OpenAI-compat)
     from mlaude.providers.local import LocalProvider
@@ -140,34 +212,16 @@ def create_provider(
     )
 
 
-def create_provider_with_failover(
-    primary_provider: str | None = None,
-    primary_base_url: str = "",
-    primary_api_key: str = "",
-    primary_model: str = "",
-    fallback_provider: str | None = None,
-    fallback_base_url: str = "",
-    fallback_api_key: str = "",
-    fallback_model: str = "",
-) -> tuple[BaseProvider, BaseProvider | None]:
-    """Create primary + optional fallback providers.
-
-    Returns (primary, fallback) where fallback may be None.
-    """
-    primary = create_provider(
-        provider=primary_provider,
-        base_url=primary_base_url,
-        api_key=primary_api_key,
-        default_model=primary_model,
-    )
-
-    fallback = None
-    if fallback_provider or fallback_base_url:
-        fallback = create_provider(
-            provider=fallback_provider,
-            base_url=fallback_base_url,
-            api_key=fallback_api_key,
-            default_model=fallback_model,
-        )
-
-    return primary, fallback
+def list_providers() -> list[dict[str, str]]:
+    """List all known providers with their status."""
+    result = []
+    for pid, label in PROVIDER_LABELS.items():
+        env_vars = _KEY_ENV_VARS.get(pid, [])
+        has_key = any(os.environ.get(v, "").strip() for v in env_vars)
+        result.append({
+            "id": pid,
+            "name": label,
+            "configured": "✓" if has_key or pid == "local" else "✗",
+            "env_vars": ", ".join(env_vars),
+        })
+    return result

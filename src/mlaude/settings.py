@@ -17,6 +17,8 @@ MLAUDE_HOME = Path(os.environ.get("MLAUDE_HOME", Path.home() / ".mlaude"))
 DATA_DIR = MLAUDE_HOME / "data"
 LOGS_DIR = MLAUDE_HOME / "logs"
 SKILLS_DIR = MLAUDE_HOME / "skills"
+SKINS_DIR = MLAUDE_HOME / "skins"
+CONFIG_FILE = MLAUDE_HOME / "config.yaml"
 
 # ── LLM ────────────────────────────────────────────────────────────────────
 LLM_BASE_URL = os.environ.get("MLAUDE_LLM_BASE_URL", "http://127.0.0.1:1234")
@@ -56,5 +58,33 @@ def ensure_app_dirs() -> None:
         DATA_DIR,
         LOGS_DIR,
         SKILLS_DIR,
+        SKINS_DIR,
     ):
         path.mkdir(parents=True, exist_ok=True)
+
+
+def load_config() -> dict:
+    """Load user config from ~/.mlaude/config.yaml."""
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        import yaml
+        return yaml.safe_load(CONFIG_FILE.read_text()) or {}
+    except Exception:
+        return {}
+
+
+def save_config_value(key: str, value) -> None:
+    """Set a single top-level key in config.yaml."""
+    config = load_config()
+    parts = key.split(".")
+    d = config
+    for part in parts[:-1]:
+        d = d.setdefault(part, {})
+    d[parts[-1]] = value
+    try:
+        import yaml
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_FILE.write_text(yaml.dump(config, default_flow_style=False))
+    except Exception:
+        pass

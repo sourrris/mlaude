@@ -1,20 +1,21 @@
 """CLI entry point — Hermes-style interactive agent.
 
 Full interactive CLI with Rich panels, animated spinners, slash command
-autocomplete, session management, and tool activity display.
+autocomplete, session management, skin engine, and tool activity display.
+Faithful port of the Hermes Agent CLI experience.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
+import os
 import signal
 import sys
 
 import typer
-from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import WordCompleter
-from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.styles import Style as PTStyle
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -22,10 +23,13 @@ from rich.table import Table
 from rich.text import Text
 
 from mlaude.agent import MLaudeAgent
+from mlaude.banner import VERSION, build_welcome_banner, prefetch_update_check
 from mlaude.commands import (
     COMMANDS,
     COMMANDS_BY_CATEGORY,
     resolve_command,
+    SlashCommandCompleter,
+    SlashCommandAutoSuggest,
 )
 from mlaude.display import Spinner, format_tool_start, format_tool_end, get_tool_emoji
 from mlaude.model_tools import discover_tools
@@ -35,40 +39,14 @@ from mlaude.settings import (
     LLM_BASE_URL,
     MLAUDE_HOME,
     ensure_app_dirs,
+    load_config,
+    save_config_value,
 )
 from mlaude.state import SessionDB
 
 app = typer.Typer(name="mlaude", invoke_without_command=True)
 console = Console()
 logger = logging.getLogger(__name__)
-
-VERSION = "0.3.0-dev"
-
-
-# ---------------------------------------------------------------------------
-# Banner
-# ---------------------------------------------------------------------------
-
-
-def _print_banner(model: str, base_url: str, tool_count: int) -> None:
-    console.print()
-    console.print(
-        Panel(
-            Text.from_markup(
-                f"[bold bright_yellow]mlaude[/bold bright_yellow]  ·  [dim]local AI agent[/dim]\n\n"
-                f"  [bold]Model[/bold]     [bright_cyan]{model}[/bright_cyan]\n"
-                f"  [bold]Runtime[/bold]   [dim]{base_url}[/dim]\n"
-                f"  [bold]Tools[/bold]     [dim]{tool_count} loaded[/dim]\n"
-                f"  [bold]Home[/bold]      [dim]{MLAUDE_HOME}[/dim]\n\n"
-                f"  [dim italic]Type a message or /help for commands · Ctrl+C to interrupt[/dim italic]"
-            ),
-            border_style="bright_yellow",
-            title=f"[dim]v{VERSION}[/dim]",
-            title_align="right",
-            padding=(0, 2),
-        )
-    )
-    console.print()
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +55,10 @@ def _print_banner(model: str, base_url: str, tool_count: int) -> None:
 
 
 def _show_help() -> None:
+    from mlaude.skin_engine import get_active_help_header
+    header = get_active_help_header()
+    console.print(f"\n  [bold]{header}[/bold]\n")
+
     for category, cmds in COMMANDS_BY_CATEGORY.items():
         table = Table(
             show_header=False, box=None, padding=(0, 2),
@@ -197,6 +179,67 @@ def _show_stats(db: SessionDB) -> None:
     )
 
 
+def _show_skins() -> None:
+    from mlaude.skin_engine import list_skins, get_active_skin_name
+
+    active = get_active_skin_name()
+    table = Table(title="[bold]Available Skins[/bold]", border_style="dim")
+    table.add_column("Name", style="bold")
+    table.add_column("Description")
+    table.add_column("Source", style="dim")
+    table.add_column("Active", justify="center")
+
+    for skin in list_skins():
+        is_active = "✓" if skin["name"] == active else ""
+        name_style = "bold bright_yellow" if skin["name"] == active else "bold"
+        table.add_row(
+            f"[{name_style}]{skin['name']}[/{name_style}]",
+            skin["description"],
+            skin["source"],
+            f"[green]{is_active}[/green]",
+        )
+
+    console.print(table)
+
+
+def _show_providers() -> None:
+    from mlaude.providers.registry import list_providers
+
+    table = Table(title="[bold]Available Providers[/bold]", border_style="dim")
+    table.add_column("Provider", style="bold")
+    table.add_column("Name")
+    table.add_column("Configured", justify="center")
+    table.add_column("Env Vars", style="dim")
+
+    for p in list_providers():
+        style = "green" if p["configured"] == "✓" else "red"
+        table.add_row(
+            p["id"],
+            p["name"],
+            f"[{style}]{p['configured']}[/{style}]",
+            p["env_vars"],
+        )
+
+    console.print(table)
+
+
+def _show_config(model: str, base_url: str, temperature: float, provider: str) -> None:
+    from mlaude.skin_engine import get_active_skin_name
+
+    table = Table(title="[bold]Current Configuration[/bold]", border_style="dim")
+    table.add_column("Setting", style="bold")
+    table.add_column("Value")
+
+    table.add_row("Model", model)
+    table.add_row("Provider", provider or "auto")
+    table.add_row("Base URL", base_url)
+    table.add_row("Temperature", str(temperature))
+    table.add_row("Skin", get_active_skin_name())
+    table.add_row("Home", str(MLAUDE_HOME))
+
+    console.print(table)
+
+
 # ---------------------------------------------------------------------------
 # Main CLI
 # ---------------------------------------------------------------------------
@@ -213,6 +256,7 @@ def main(
     session: str = typer.Option(None, "--session", "-s", help="Resume a session by ID"),
     provider: str = typer.Option(None, "--provider", "-p", help="Provider override"),
     debug: bool = typer.Option(False, "--debug", help="Enable debug logging"),
+    skin: str = typer.Option(None, "--skin", help="Skin theme to use"),
 ):
     """Start the mlaude interactive agent."""
     if ctx.invoked_subcommand is not None:
@@ -222,6 +266,18 @@ def main(
         logging.basicConfig(level=logging.DEBUG)
 
     ensure_app_dirs()
+
+    # Load config and initialize skin
+    config = load_config()
+    from mlaude.skin_engine import init_skin_from_config, set_active_skin
+    if skin:
+        set_active_skin(skin)
+    else:
+        init_skin_from_config(config)
+
+    # Start background update check
+    prefetch_update_check()
+
     db = SessionDB()
 
     # Discover tools
@@ -265,15 +321,53 @@ def main(
             console.print(Markdown(response))
         return
 
-    # Interactive mode
-    _print_banner(model, base_url, tool_count)
+    # Interactive mode — print banner
+    build_welcome_banner(
+        console=console,
+        model=model,
+        cwd=os.getcwd(),
+        session_id=agent.session_id,
+        tool_count=tool_count,
+    )
 
-    # Setup prompt_toolkit
-    cmd_names = ["/" + name for name in COMMANDS.keys()]
-    completer = WordCompleter(cmd_names, sentence=True)
+    # Welcome message
+    from mlaude.skin_engine import get_active_skin
+    welcome = get_active_skin().get_branding("welcome", "")
+    if welcome:
+        console.print(f"\n  [dim]{welcome}[/dim]\n")
+
+    # Setup prompt_toolkit with rich completer
+    from mlaude.skin_engine import get_active_prompt_symbol, get_prompt_toolkit_style_overrides
+    from prompt_toolkit import PromptSession
+
+    _completer = SlashCommandCompleter()
+    _history_file = MLAUDE_HOME / "history"
+    _history_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Build skin-aware style
+    _tui_style_base = {
+        'input-area': '#FFF8DC',
+        'placeholder': '#555555 italic',
+        'prompt': '#FFF8DC',
+        'prompt-working': '#888888 italic',
+        'completion-menu': 'bg:#1a1a2e #FFF8DC',
+        'completion-menu.completion': 'bg:#1a1a2e #FFF8DC',
+        'completion-menu.completion.current': 'bg:#333355 #FFD700',
+        'completion-menu.meta.completion': 'bg:#1a1a2e #888888',
+        'completion-menu.meta.completion.current': 'bg:#333355 #FFBF00',
+    }
+    _tui_style_base.update(get_prompt_toolkit_style_overrides())
+    _pt_style = PTStyle.from_dict(_tui_style_base)
+
     prompt_session: PromptSession = PromptSession(
-        completer=completer,
-        history=InMemoryHistory(),
+        completer=_completer,
+        complete_while_typing=True,
+        history=FileHistory(str(_history_file)),
+        auto_suggest=SlashCommandAutoSuggest(
+            history_suggest=AutoSuggestFromHistory(),
+            completer=_completer,
+        ),
+        style=_pt_style,
     )
 
     # Interrupt handling
@@ -283,7 +377,8 @@ def main(
         nonlocal _interrupt_count
         _interrupt_count += 1
         if _interrupt_count >= 2:
-            console.print("\n[dim]Goodbye.[/dim]")
+            goodbye = get_active_skin().get_branding("goodbye", "Goodbye!")
+            console.print(f"\n[dim]{goodbye}[/dim]")
             sys.exit(0)
         agent.request_interrupt()
         console.print("\n[dim]Interrupting… (Ctrl+C again to quit)[/dim]")
@@ -291,15 +386,17 @@ def main(
     signal.signal(signal.SIGINT, _sigint_handler)
 
     debug_mode = debug
+    current_provider = provider
 
     while True:
         try:
+            prompt_sym = get_active_prompt_symbol()
             user_input = prompt_session.prompt(
-                [("class:prompt", "❯ ")],
-                style=None,
+                [("class:prompt", prompt_sym)],
             ).strip()
         except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]Goodbye.[/dim]")
+            goodbye = get_active_skin().get_branding("goodbye", "Goodbye!")
+            console.print(f"\n[dim]{goodbye}[/dim]")
             break
 
         if not user_input:
@@ -313,7 +410,8 @@ def main(
 
             if canonical == "quit":
                 db.end_session(agent.session_id)
-                console.print("[dim]Goodbye.[/dim]")
+                goodbye = get_active_skin().get_branding("goodbye", "Goodbye!")
+                console.print(f"[dim]{goodbye}[/dim]")
                 break
 
             elif canonical == "help":
@@ -324,7 +422,7 @@ def main(
                 conversation_history = []
                 agent = MLaudeAgent(
                     base_url=base_url, model=model, temperature=temperature,
-                    quiet_mode=quiet, provider=provider,
+                    quiet_mode=quiet, provider=current_provider,
                 )
                 db.create_session(
                     session_id=agent.session_id, platform="cli", model=model,
@@ -339,6 +437,26 @@ def main(
                     console.print(f"[dim]Model set to: {model}[/dim]")
                 else:
                     console.print(f"[dim]Current model: {agent.model}[/dim]")
+                continue
+
+            elif canonical == "provider":
+                if args_str:
+                    new_provider = args_str.strip()
+                    current_provider = new_provider
+                    from mlaude.providers.registry import get_provider_label
+                    label = get_provider_label(new_provider)
+                    # Recreate agent with new provider
+                    agent = MLaudeAgent(
+                        base_url=base_url, model=model, temperature=temperature,
+                        quiet_mode=quiet, provider=new_provider,
+                    )
+                    agent.session_id = db.create_session(
+                        platform="cli", model=model,
+                    )
+                    conversation_history = []
+                    console.print(f"[dim]Provider set to: {label} (new session)[/dim]")
+                else:
+                    _show_providers()
                 continue
 
             elif canonical == "temperature":
@@ -375,7 +493,6 @@ def main(
                     _show_sessions(db)
                     console.print("[dim]Usage: /resume <session_id>[/dim]")
                     continue
-                # Find matching session
                 full_sessions = db.list_sessions(limit=100)
                 match = None
                 for s in full_sessions:
@@ -392,6 +509,64 @@ def main(
                     )
                 else:
                     console.print(f"[dim]Session not found: {sid}[/dim]")
+                continue
+
+            elif canonical == "delete":
+                sid = args_str.strip()
+                if not sid:
+                    console.print("[dim]Usage: /delete <session_id>[/dim]")
+                    continue
+                full_sessions = db.list_sessions(limit=100)
+                match = None
+                for s in full_sessions:
+                    if s["id"].startswith(sid):
+                        match = s
+                        break
+                if match:
+                    db.delete_session(match["id"])
+                    console.print(f"[dim]Deleted session {match['id'][:12]}…[/dim]")
+                else:
+                    console.print(f"[dim]Session not found: {sid}[/dim]")
+                continue
+
+            elif canonical == "search":
+                query = args_str.strip()
+                if not query:
+                    console.print("[dim]Usage: /search <query>[/dim]")
+                    continue
+                results = db.search_sessions(query)
+                if results:
+                    table = Table(title=f"[bold]Search: {query}[/bold]", border_style="dim")
+                    table.add_column("ID", style="dim", max_width=12)
+                    table.add_column("Title")
+                    table.add_column("Updated", style="dim")
+                    for s in results:
+                        table.add_row(s["id"][:12], s.get("title", ""), s.get("updated_at", "")[:19])
+                    console.print(table)
+                else:
+                    console.print(f"[dim]No results for: {query}[/dim]")
+                continue
+
+            elif canonical == "copy":
+                # Copy last assistant response to clipboard
+                if conversation_history:
+                    last_msg = None
+                    for m in reversed(conversation_history):
+                        if m.get("role") == "assistant" and m.get("content"):
+                            last_msg = m["content"]
+                            break
+                    if last_msg:
+                        try:
+                            import subprocess
+                            proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
+                            proc.communicate(last_msg.encode())
+                            console.print("[dim]Copied last response to clipboard.[/dim]")
+                        except Exception:
+                            console.print("[dim]Clipboard not available.[/dim]")
+                    else:
+                        console.print("[dim]No assistant response to copy.[/dim]")
+                else:
+                    console.print("[dim]No conversation history.[/dim]")
                 continue
 
             elif canonical == "history":
@@ -423,6 +598,20 @@ def main(
                     console.print("[dim]System prompt updated.[/dim]")
                 else:
                     console.print(f"[dim]{agent.system_prompt[:200]}[/dim]")
+                continue
+
+            elif canonical == "skin":
+                if args_str:
+                    skin_name = args_str.strip()
+                    set_active_skin(skin_name)
+                    save_config_value("display.skin", skin_name)
+                    console.print(f"[dim]Skin set to: {skin_name}[/dim]")
+                else:
+                    _show_skins()
+                continue
+
+            elif canonical == "config":
+                _show_config(model, base_url, temperature, current_provider or "auto")
                 continue
 
             else:
@@ -462,12 +651,18 @@ def main(
 
         final = result.get("final_response", "")
         if final:
+            # Skin-aware response panel
+            from mlaude.skin_engine import get_active_skin
+            skin = get_active_skin()
+            response_label = skin.get_branding("response_label", " ☠ mlaude ")
+            response_border = skin.get_color("response_border", "#FFD700")
+
             console.print()
             console.print(
                 Panel(
                     Markdown(final),
-                    border_style="bright_black",
-                    title="[dim bright_yellow]mlaude[/dim bright_yellow]",
+                    border_style=response_border,
+                    title=f"[dim]{response_label}[/dim]",
                     title_align="left",
                     padding=(1, 2),
                 )
