@@ -6,7 +6,7 @@ Current milestone scope is:
 - classic interactive CLI (`uv run mlaude`)
 - shared session persistence and search
 - tool-calling with local safety approvals
-- TUI launch flags with graceful fallback to classic CLI
+- fullscreen prompt-toolkit TUI for interactive runs
 
 ## Quick Start
 
@@ -23,7 +23,7 @@ UV_CACHE_DIR=.uv-cache uv sync --extra dev
 Useful flags:
 - `--resume/-r <session_id>`: resume by id/prefix
 - `--continue/-c`: continue most recent session
-- `--tui`, `--tui-dev`: attempt TUI launch, fallback if unavailable
+- `--tui`, `--tui-dev`: force the fullscreen TUI path (same interactive UI)
 - `--yolo`: bypass risky-tool approval prompts
 
 ## Commands

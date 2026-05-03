@@ -112,18 +112,6 @@ class GatewayOrchestrator:
             if not response_text:
                 response_text = "(No response generated)"
 
-            # Persist messages
-            self._db.add_message(
-                session_id=agent.session_id,
-                role="user",
-                content=message.text,
-            )
-            self._db.add_message(
-                session_id=agent.session_id,
-                role="assistant",
-                content=response_text,
-            )
-
             # Send response
             await adapter.send_message(
                 OutgoingMessage(

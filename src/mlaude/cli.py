@@ -6,15 +6,15 @@ autocomplete, session management, skin engine, and tool activity display.
 
 from __future__ import annotations
 
+import io
 import logging
 import os
-import json
 import signal
-import sys
+import shutil
+import threading
+from dataclasses import dataclass
 
 import typer
-from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style as PTStyle
 from rich.console import Console
 from rich.markdown import Markdown
@@ -22,14 +22,20 @@ from rich.panel import Panel
 from rich.table import Table
 
 from mlaude.agent import MLaudeAgent
-from mlaude.banner import VERSION, build_welcome_banner, prefetch_update_check
+from mlaude.banner import VERSION, prefetch_update_check
+from mlaude.chat_ui import (
+    FullscreenChatShell,
+    build_assistant_header,
+    build_notice_line,
+    build_startup_banner,
+    build_status_line,
+)
 from mlaude.commands import (
     COMMANDS_BY_CATEGORY,
     resolve_command,
     SlashCommandCompleter,
-    SlashCommandAutoSuggest,
 )
-from mlaude.display import Spinner, format_tool_start, format_tool_end, get_tool_emoji
+from mlaude.display import Spinner, get_tool_emoji
 from mlaude.model_tools import discover_tools
 from mlaude.settings import (
     DEFAULT_CHAT_MODEL,
@@ -42,10 +48,61 @@ from mlaude.settings import (
 )
 from mlaude.state import SessionDB
 from mlaude.safety import policy as safety_policy
+from mlaude.tui_gateway.launcher import TuiLaunchError, can_launch_tui, launch_tui
 
 app = typer.Typer(name="mlaude", invoke_without_command=True)
 console = Console()
 logger = logging.getLogger(__name__)
+
+
+def _ensure_interactive_tty() -> None:
+    """Fail fast before prompt-toolkit tries to boot on a non-terminal stream."""
+    ok, reason = can_launch_tui()
+    if ok:
+        return
+    if reason == "TTY not detected":
+        console.print(
+            f"[bold red]Interactive mode requires a TTY.[/bold red] "
+            f"[dim]({reason}; use --message for non-interactive runs)[/dim]"
+        )
+    else:
+        console.print(
+            f"[bold red]Interactive TUI is unavailable.[/bold red] "
+            f"[dim]({reason})[/dim]"
+        )
+    raise typer.Exit(code=1)
+
+
+def _launch_tui(
+    *,
+    cwd: str,
+    resume_id: str | None,
+    provider: str | None,
+    model: str,
+    base_url: str,
+    temperature: float,
+    yolo: bool,
+    skin: str | None,
+    tui_dev: bool,
+) -> None:
+    try:
+        code = launch_tui(
+            cwd=cwd,
+            resume_id=resume_id,
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            temperature=temperature,
+            yolo=yolo,
+            skin=skin,
+            tui_dev=tui_dev,
+        )
+    except TuiLaunchError as exc:
+        console.print(f"[bold red]Failed to launch TUI:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+    if code != 0:
+        console.print(f"[bold red]TUI exited with status {code}.[/bold red]")
+        raise typer.Exit(code=code)
 
 
 # ---------------------------------------------------------------------------
@@ -53,10 +110,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _show_help() -> None:
+def _show_help(out: Console | None = None) -> None:
+    out = out or console
     from mlaude.skin_engine import get_active_help_header
     header = get_active_help_header()
-    console.print(f"\n  [bold]{header}[/bold]\n")
+    out.print(f"\n  [bold]{header}[/bold]\n")
 
     for category, cmds in COMMANDS_BY_CATEGORY.items():
         table = Table(
@@ -71,15 +129,16 @@ def _show_help() -> None:
                 f"[bold bright_yellow]/{cmd.name}[/bold bright_yellow]{args}",
                 f"{cmd.description}{aliases}",
             )
-        console.print(table)
-        console.print()
+        out.print(table)
+        out.print()
 
 
-def _show_tools() -> None:
+def _show_tools(out: Console | None = None) -> None:
+    out = out or console
     from mlaude.tools.registry import registry
     tools = registry.get_all()
     if not tools:
-        console.print("[dim]No tools loaded.[/dim]")
+        out.print("[dim]No tools loaded.[/dim]")
         return
 
     table = Table(title="[bold]Available Tools[/bold]", border_style="dim")
@@ -93,10 +152,11 @@ def _show_tools() -> None:
         style = "green" if entry.is_available() else "red"
         table.add_row(f"{emoji} {name}", entry.toolset, f"[{style}]{avail}[/{style}]")
 
-    console.print(table)
+    out.print(table)
 
 
-def _show_toolsets() -> None:
+def _show_toolsets(out: Console | None = None) -> None:
+    out = out or console
     from mlaude.toolsets import TOOLSETS
 
     table = Table(title="[bold]Available Toolsets[/bold]", border_style="dim")
@@ -111,17 +171,18 @@ def _show_toolsets() -> None:
         detail = " ".join(filter(None, [tools_list, includes_list]))
         table.add_row(ts_name, desc, detail or "—")
 
-    console.print(table)
+    out.print(table)
 
 
-def _show_skills() -> None:
+def _show_skills(out: Console | None = None) -> None:
+    out = out or console
     from mlaude.settings import SKILLS_DIR
 
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     skill_files = sorted(SKILLS_DIR.glob("**/*.md"))
 
     if not skill_files:
-        console.print(
+        out.print(
             f"[dim]No skills found in [bold]{SKILLS_DIR}[/bold].\n"
             "  Ask the agent to create a skill, or add a .md file there.[/dim]"
         )
@@ -142,14 +203,15 @@ def _show_skills() -> None:
         size = f"{len(content):,} B"
         table.add_row(str(rel).replace(".md", ""), title, size)
 
-    console.print(table)
-    console.print(f"  [dim]Skills directory: {SKILLS_DIR}[/dim]")
+    out.print(table)
+    out.print(f"  [dim]Skills directory: {SKILLS_DIR}[/dim]")
 
 
-def _show_sessions(db: SessionDB) -> None:
+def _show_sessions(db: SessionDB, out: Console | None = None) -> None:
+    out = out or console
     sessions = db.list_sessions(limit=15)
     if not sessions:
-        console.print("[dim]No sessions yet.[/dim]")
+        out.print("[dim]No sessions yet.[/dim]")
         return
 
     table = Table(title="[bold]Recent Sessions[/bold]", border_style="dim")
@@ -166,19 +228,21 @@ def _show_sessions(db: SessionDB) -> None:
             s.get("updated_at", "")[:19],
         )
 
-    console.print(table)
+    out.print(table)
 
 
-def _show_stats(db: SessionDB) -> None:
+def _show_stats(db: SessionDB, out: Console | None = None) -> None:
+    out = out or console
     stats = db.get_stats()
-    console.print(
+    out.print(
         f"  [bold]Sessions:[/bold] {stats['sessions']}  "
         f"[bold]Messages:[/bold] {stats['messages']}  "
         f"[bold]Tokens:[/bold] {stats['total_tokens']:,}"
     )
 
 
-def _show_skins() -> None:
+def _show_skins(out: Console | None = None) -> None:
+    out = out or console
     from mlaude.skin_engine import list_skins, get_active_skin_name
 
     active = get_active_skin_name()
@@ -198,10 +262,11 @@ def _show_skins() -> None:
             f"[green]{is_active}[/green]",
         )
 
-    console.print(table)
+    out.print(table)
 
 
-def _show_providers() -> None:
+def _show_providers(out: Console | None = None) -> None:
+    out = out or console
     from mlaude.providers.registry import list_providers
 
     table = Table(title="[bold]Available Providers[/bold]", border_style="dim")
@@ -219,10 +284,17 @@ def _show_providers() -> None:
             p["env_vars"],
         )
 
-    console.print(table)
+    out.print(table)
 
 
-def _show_config(model: str, base_url: str, temperature: float, provider: str) -> None:
+def _show_config(
+    model: str,
+    base_url: str,
+    temperature: float,
+    provider: str,
+    out: Console | None = None,
+) -> None:
+    out = out or console
     from mlaude.skin_engine import get_active_skin_name
 
     table = Table(title="[bold]Current Configuration[/bold]", border_style="dim")
@@ -236,7 +308,552 @@ def _show_config(model: str, base_url: str, temperature: float, provider: str) -
     table.add_row("Skin", get_active_skin_name())
     table.add_row("Home", str(MLAUDE_HOME))
 
-    console.print(table)
+    out.print(table)
+
+
+def _capture_console_output(renderer) -> str:
+    """Capture a helper that writes to a Rich console and return plain text."""
+    buf = io.StringIO()
+    temp_console = Console(file=buf, force_terminal=False, color_system=None, width=100)
+    renderer(temp_console)
+    return buf.getvalue().rstrip()
+
+
+@dataclass
+class _InteractiveState:
+    agent: MLaudeAgent
+    db: SessionDB
+    model: str
+    base_url: str
+    temperature: float
+    current_provider: str | None
+    debug_mode: bool
+    details_mode: bool
+    busy_mode: str
+    reasoning_mode: str
+    quiet: bool
+    conversation_history: list[dict]
+    last_user_input: str = ""
+    last_stop_reason: str = "complete"
+    last_iterations: int = 0
+
+
+def _build_fullscreen_style() -> PTStyle:
+    from mlaude.skin_engine import get_fullscreen_style_overrides
+
+    base = {
+        "transcript": "bg:#181818 #F3EFD9",
+        "status-bar": "bg:#151515 #B88A11",
+        "input-rule": "#8A5A17",
+        "prompt": "bg:#181818 #F4E8C1 bold",
+        "input-shell": "bg:#181818 #F4E8C1",
+        "input-area": "bg:#181818 #F4E8C1",
+        "placeholder": "#8B7A55 italic",
+        "completion-menu": "bg:#151515 #F3EFD9",
+        "completion-menu.completion": "bg:#151515 #F3EFD9",
+        "completion-menu.completion.current": "bg:#333333 #FFD447",
+        "completion-menu.meta.completion": "bg:#151515 #8B7A55",
+        "completion-menu.meta.completion.current": "bg:#333333 #B88A11",
+    }
+    base.update(get_fullscreen_style_overrides())
+    return PTStyle.from_dict(base)
+
+
+def _append_command_output(shell: FullscreenChatShell, text: str) -> None:
+    if not text:
+        return
+    shell.append_blank_line()
+    shell.append_text(text)
+    shell.append_blank_line()
+
+
+def _append_assistant_response(shell: FullscreenChatShell, response: str) -> None:
+    from mlaude.skin_engine import get_active_skin
+
+    skin = get_active_skin()
+    assistant_name = skin.get_branding("assistant_name", skin.get_branding("agent_name", "mlaude"))
+    assistant_icon = skin.get_branding("assistant_icon", "☠")
+    shell.append_blank_line()
+    shell.append_text(build_assistant_header(assistant_name, assistant_icon))
+    shell.append_blank_line()
+    for line in (response.splitlines() or [""]):
+        shell.append_text(f"  {line}")
+    shell.append_blank_line()
+
+
+def _update_shell_status(
+    shell: FullscreenChatShell,
+    state: _InteractiveState,
+    *,
+    busy: bool = False,
+    turn_usage: dict[str, int] | None = None,
+    model_label: str | None = None,
+    provider_label: str | None = None,
+    api_calls: int | None = None,
+    stop_reason: str | None = None,
+) -> None:
+    from mlaude.providers.registry import get_provider_label
+
+    session = state.db.get_session(state.agent.session_id) or {}
+    shell.set_status(
+        build_status_line(
+            model_label=model_label or state.agent.model,
+            provider_label=provider_label or get_provider_label(state.current_provider or state.agent.provider_name),
+            turn_tokens=(turn_usage or {}).get("total_tokens") if turn_usage else None,
+            session_tokens=session.get("total_tokens"),
+            api_calls=api_calls if api_calls is not None else state.last_iterations or None,
+            busy=busy,
+            stop_reason=stop_reason or state.last_stop_reason,
+        )
+    )
+
+
+def _render_welcome(shell: FullscreenChatShell) -> None:
+    from mlaude.skin_engine import get_active_skin
+
+    skin = get_active_skin()
+    agent_name = skin.get_branding("agent_name", "mlaude")
+    welcome = skin.get_branding("welcome", "Welcome to mlaude! Type your message or /help for commands.")
+    logo_text = skin.banner_logo or ""
+    if not logo_text and agent_name == "mlaude":
+        from mlaude.banner import MLAUDE_LOGO
+
+        logo_text = MLAUDE_LOGO
+
+    lines = build_startup_banner(
+        agent_name=agent_name,
+        version=VERSION,
+        welcome_text=welcome,
+        helper_text="Use /help for commands. Ctrl+C interrupts a running turn, then exits.",
+        logo_text=logo_text,
+        width=max(60, shutil.get_terminal_size((80, 24)).columns - 2),
+    )
+    shell.append_block(lines)
+
+
+def _handle_command(
+    user_input: str,
+    state: _InteractiveState,
+    shell: FullscreenChatShell,
+) -> str | None:
+    from mlaude.providers.registry import get_provider_label
+    from mlaude.skin_engine import get_active_skin, set_active_skin
+
+    canonical, args_str = resolve_command(user_input)
+
+    if canonical == "quit":
+        state.db.end_session(state.agent.session_id)
+        shell.append_blank_line()
+        shell.append_text(get_active_skin().get_branding("goodbye", "Goodbye!"))
+        shell.exit()
+        return None
+
+    if canonical == "help":
+        _append_command_output(shell, _capture_console_output(_show_help))
+        return None
+
+    if canonical == "new":
+        state.conversation_history = []
+        state.agent = MLaudeAgent(
+            base_url=state.base_url,
+            model=state.model,
+            temperature=state.temperature,
+            quiet_mode=state.quiet,
+            provider=state.current_provider,
+            session_db=state.db,
+        )
+        shell.append_text(build_notice_line("New session started."))
+        _update_shell_status(shell, state)
+        return None
+
+    if canonical == "model":
+        if args_str:
+            state.model = args_str.strip()
+            state.agent.model = state.model
+            shell.append_text(build_notice_line(f"Model set to: {state.model}"))
+        else:
+            shell.append_text(build_notice_line(f"Current model: {state.agent.model}"))
+        _update_shell_status(shell, state)
+        return None
+
+    if canonical == "provider":
+        if args_str:
+            new_provider = args_str.strip()
+            state.current_provider = new_provider
+            label = get_provider_label(new_provider)
+            state.agent = MLaudeAgent(
+                base_url=state.base_url,
+                model=state.model,
+                temperature=state.temperature,
+                quiet_mode=state.quiet,
+                provider=new_provider,
+                session_db=state.db,
+            )
+            state.conversation_history = []
+            shell.append_text(build_notice_line(f"Provider set to: {label} (new session)"))
+            _update_shell_status(shell, state, provider_label=label)
+        else:
+            _append_command_output(shell, _capture_console_output(_show_providers))
+        return None
+
+    if canonical == "temperature":
+        if args_str:
+            try:
+                state.temperature = float(args_str)
+                state.agent.temperature = state.temperature
+                shell.append_text(build_notice_line(f"Temperature set to: {state.temperature}"))
+            except ValueError:
+                shell.append_text(build_notice_line("Invalid temperature value.", prefix="!"))
+        else:
+            shell.append_text(build_notice_line(f"Current temperature: {state.agent.temperature}"))
+        return None
+
+    if canonical == "tools":
+        _append_command_output(shell, _capture_console_output(_show_tools))
+        return None
+
+    if canonical == "toolsets":
+        _append_command_output(shell, _capture_console_output(_show_toolsets))
+        return None
+
+    if canonical == "skills":
+        _append_command_output(shell, _capture_console_output(_show_skills))
+        return None
+
+    if canonical == "sessions":
+        _append_command_output(shell, _capture_console_output(lambda out: _show_sessions(state.db, out)))
+        return None
+
+    if canonical == "usage":
+        session = state.db.get_session(state.agent.session_id) or {}
+        shell.append_text(
+            build_notice_line(
+                f"Session {state.agent.session_id[:12]}… | tokens {session.get('total_tokens', 0):,} | cost ${float(session.get('total_cost', 0.0)):.4f}"
+            )
+        )
+        return None
+
+    if canonical == "compress":
+        source_id = state.agent.session_id
+        new_sid = state.db.create_continuation_session(source_id)
+        state.agent.session_id = new_sid
+        state.conversation_history = []
+        shell.append_text(
+            build_notice_line(
+                f"Compressed context into continuation session {new_sid[:12]}… (parent {source_id[:12]}…)"
+            )
+        )
+        _update_shell_status(shell, state)
+        return None
+
+    if canonical == "title":
+        if args_str.strip():
+            state.db.update_session_title(state.agent.session_id, args_str.strip())
+            shell.append_text(build_notice_line("Session title updated."))
+        else:
+            session = state.db.get_session(state.agent.session_id) or {}
+            shell.append_text(build_notice_line(f"Title: {session.get('title', '') or '(untitled)'}"))
+        return None
+
+    if canonical == "retry":
+        if state.last_user_input:
+            return state.last_user_input
+        shell.append_text(build_notice_line("No prior user message to retry."))
+        return None
+
+    if canonical == "undo":
+        if len(state.conversation_history) >= 2:
+            state.conversation_history = state.conversation_history[:-2]
+            shell.append_text(build_notice_line("Removed last conversation turn from in-memory context."))
+        else:
+            shell.append_text(build_notice_line("Not enough context to undo."))
+        return None
+
+    if canonical == "resume":
+        sid = args_str.strip()
+        if not sid:
+            _append_command_output(shell, _capture_console_output(lambda out: _show_sessions(state.db, out)))
+            shell.append_text(build_notice_line("Usage: /resume <session_id>"))
+            return None
+        full_sessions = state.db.list_sessions(limit=100)
+        match = next((session for session in full_sessions if session["id"].startswith(sid)), None)
+        if match:
+            history = state.db.get_openai_messages(match["id"])
+            state.conversation_history = [m for m in history if m.get("role") != "system"]
+            state.agent.session_id = match["id"]
+            shell.append_text(
+                build_notice_line(
+                    f"Resumed session {match['id'][:12]}… ({len(state.conversation_history)} messages)"
+                )
+            )
+            _update_shell_status(shell, state)
+        else:
+            shell.append_text(build_notice_line(f"Session not found: {sid}", prefix="!"))
+        return None
+
+    if canonical == "delete":
+        sid = args_str.strip()
+        if not sid:
+            shell.append_text(build_notice_line("Usage: /delete <session_id>"))
+            return None
+        full_sessions = state.db.list_sessions(limit=100)
+        match = next((session for session in full_sessions if session["id"].startswith(sid)), None)
+        if match:
+            state.db.delete_session(match["id"])
+            shell.append_text(build_notice_line(f"Deleted session {match['id'][:12]}…"))
+        else:
+            shell.append_text(build_notice_line(f"Session not found: {sid}", prefix="!"))
+        return None
+
+    if canonical == "search":
+        query = args_str.strip()
+        if not query:
+            shell.append_text(build_notice_line("Usage: /search <query>"))
+            return None
+        results = state.db.search_sessions(query)
+        if results:
+            lines = [f"Search: {query}", ""]
+            for result in results:
+                lines.append(
+                    f"{result['id'][:12]}  {result.get('updated_at', '')[:19]}  {result.get('title', '') or '(untitled)'}"
+                )
+            _append_command_output(shell, "\n".join(lines))
+        else:
+            shell.append_text(build_notice_line(f"No results for: {query}"))
+        return None
+
+    if canonical == "copy":
+        if state.conversation_history:
+            last_msg = next(
+                (
+                    message["content"]
+                    for message in reversed(state.conversation_history)
+                    if message.get("role") == "assistant" and message.get("content")
+                ),
+                None,
+            )
+            if last_msg:
+                try:
+                    import subprocess
+
+                    proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
+                    proc.communicate(last_msg.encode())
+                    shell.append_text(build_notice_line("Copied last response to clipboard."))
+                except Exception:
+                    shell.append_text(build_notice_line("Clipboard not available.", prefix="!"))
+            else:
+                shell.append_text(build_notice_line("No assistant response to copy."))
+        else:
+            shell.append_text(build_notice_line("No conversation history."))
+        return None
+
+    if canonical == "history":
+        msgs = state.db.get_messages(state.agent.session_id, limit=20)
+        lines = [f"{message['role']}: {(message.get('content') or '')[:100]}" for message in msgs]
+        _append_command_output(shell, "\n".join(lines) if lines else "No history.")
+        return None
+
+    if canonical == "stats":
+        _append_command_output(shell, _capture_console_output(lambda out: _show_stats(state.db, out)))
+        return None
+
+    if canonical == "version":
+        shell.append_text(build_notice_line(f"mlaude v{VERSION}"))
+        return None
+
+    if canonical == "debug":
+        state.debug_mode = not state.debug_mode
+        level = logging.DEBUG if state.debug_mode else logging.WARNING
+        logging.getLogger("mlaude").setLevel(level)
+        shell.append_text(build_notice_line(f"Debug: {'on' if state.debug_mode else 'off'}"))
+        return None
+
+    if canonical == "busy":
+        if args_str.strip() in {"on", "off"}:
+            state.busy_mode = args_str.strip()
+            save_config_value("display.busy_input_mode", state.busy_mode)
+        shell.append_text(build_notice_line(f"Busy input mode: {state.busy_mode}"))
+        return None
+
+    if canonical == "reasoning":
+        if args_str.strip() in {"low", "medium", "high"}:
+            state.reasoning_mode = args_str.strip()
+        shell.append_text(build_notice_line(f"Reasoning mode: {state.reasoning_mode}"))
+        return None
+
+    if canonical == "details":
+        if args_str.strip() in {"on", "off"}:
+            state.details_mode = args_str.strip() == "on"
+            save_config_value("display.details_mode", state.details_mode)
+        shell.append_text(build_notice_line(f"Details mode: {'on' if state.details_mode else 'off'}"))
+        return None
+
+    if canonical == "system":
+        if args_str:
+            state.agent.system_prompt = args_str
+            shell.append_text(build_notice_line("System prompt updated."))
+        else:
+            shell.append_text(build_notice_line(state.agent.system_prompt[:200]))
+        return None
+
+    if canonical == "skin":
+        if args_str:
+            skin_name = args_str.strip()
+            set_active_skin(skin_name)
+            save_config_value("display.skin", skin_name)
+            shell.set_style(_build_fullscreen_style())
+            from mlaude.skin_engine import get_active_prompt_symbol
+            shell.set_prompt(get_active_prompt_symbol().strip() or ">")
+            shell.append_text(build_notice_line(f"Skin set to: {skin_name}"))
+        else:
+            _append_command_output(shell, _capture_console_output(_show_skins))
+        return None
+
+    if canonical == "config":
+        _append_command_output(
+            shell,
+            _capture_console_output(
+                lambda out: _show_config(
+                    state.model,
+                    state.base_url,
+                    state.temperature,
+                    state.current_provider or "auto",
+                    out,
+                )
+            ),
+        )
+        return None
+
+    shell.append_text(build_notice_line(f"Unknown command: {user_input.split()[0]}", prefix="!"))
+    return None
+
+
+def _run_fullscreen_chat(
+    *,
+    state: _InteractiveState,
+) -> None:
+    from mlaude.skin_engine import get_active_prompt_symbol
+
+    completer = SlashCommandCompleter()
+    history_file = MLAUDE_HOME / "history"
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+
+    busy_lock = threading.Lock()
+    busy_state = {"value": False}
+    interrupt_count = {"value": 0}
+
+    shell: FullscreenChatShell
+
+    def _set_busy(value: bool) -> None:
+        with busy_lock:
+            busy_state["value"] = value
+        shell.set_busy(value, "Working..." if value else "")
+
+    def _is_busy() -> bool:
+        with busy_lock:
+            return busy_state["value"]
+
+    def _handle_interrupt() -> bool:
+        if _is_busy():
+            interrupt_count["value"] += 1
+            if interrupt_count["value"] >= 2:
+                return False
+            state.agent.request_interrupt()
+            shell.append_text(build_notice_line("Interrupting… (Ctrl+C again to quit)", prefix="!"))
+            return True
+        return False
+
+    def _handle_exit() -> None:
+        state.db.end_session(state.agent.session_id)
+
+    def _start_agent_turn(text: str) -> None:
+        if _is_busy():
+            return
+
+        interrupt_count["value"] = 0
+        state.agent._interrupt_requested = False
+        state.last_user_input = text
+        state.agent.reasoning_effort = state.reasoning_mode
+        state.agent.on_approval_request = lambda tool, args: shell.prompt_for_approval(tool)
+        state.agent.on_tool_start = lambda name, args: shell.append_text(
+            build_notice_line(f"{name}({', '.join(f'{k}={repr(v)[:50]}' for k, v in list(args.items())[:3])})")
+        )
+        state.agent.on_tool_end = lambda name, result: shell.append_text(
+            build_notice_line(f"{name} → {result[:160].replace(chr(10), ' ')}")
+        )
+
+        shell.append_blank_line()
+        shell.append_text(f"{get_active_prompt_symbol().strip()} {text}")
+        _set_busy(True)
+        _update_shell_status(shell, state, busy=True)
+
+        def _worker() -> None:
+            try:
+                result = state.agent.run_conversation(
+                    user_message=text,
+                    conversation_history=state.conversation_history,
+                )
+            except Exception as exc:
+                shell.append_blank_line()
+                shell.append_text(build_notice_line(f"Error: {exc}", prefix="!"))
+                state.last_stop_reason = f"error: {exc}"
+                state.last_iterations = 0
+                _set_busy(False)
+                _update_shell_status(shell, state, busy=False, stop_reason=state.last_stop_reason)
+                return
+
+            final = result.get("final_response", "")
+            if final:
+                _append_assistant_response(shell, final)
+
+            if len(state.conversation_history) == 0 and final:
+                state.db.update_session_title(state.agent.session_id, text[:60])
+
+            state.conversation_history = [m for m in result.get("messages", []) if m.get("role") != "system"]
+            state.last_stop_reason = result.get("stop_reason", "complete")
+            state.last_iterations = result.get("iterations_used", 0)
+
+            if state.details_mode:
+                shell.append_text(
+                    build_notice_line(
+                        f"reasoning={state.reasoning_mode} route={result.get('route', '')} stop={state.last_stop_reason}"
+                    )
+                )
+
+            _set_busy(False)
+            _update_shell_status(
+                shell,
+                state,
+                busy=False,
+                turn_usage=result.get("turn_usage"),
+                model_label=result.get("model_label"),
+                provider_label=result.get("provider_label"),
+                api_calls=result.get("iterations_used"),
+                stop_reason=state.last_stop_reason,
+            )
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _submit(text: str) -> None:
+        if text.startswith("/"):
+            replacement = _handle_command(text, state, shell)
+            if replacement:
+                _start_agent_turn(replacement)
+            return
+        _start_agent_turn(text)
+
+    shell = FullscreenChatShell(
+        history_file=str(history_file),
+        completer=completer,
+        style=_build_fullscreen_style(),
+        on_submit=_submit,
+        on_interrupt=_handle_interrupt,
+        on_exit=_handle_exit,
+        initial_prompt=get_active_prompt_symbol().strip() or ">",
+    )
+    _render_welcome(shell)
+    _update_shell_status(shell, state)
+    shell.run()
 
 
 # ---------------------------------------------------------------------------
@@ -255,8 +872,8 @@ def main(
     session: str = typer.Option(None, "--session", "-s", help="Resume a session by ID"),
     resume: str = typer.Option(None, "--resume", "-r", help="Resume a session by ID"),
     continue_last: bool = typer.Option(False, "--continue", "-c", help="Continue most recent session"),
-    tui: bool = typer.Option(False, "--tui", help="Launch TUI (fallback to classic CLI if unavailable)"),
-    tui_dev: bool = typer.Option(False, "--tui-dev", help="Launch TUI in dev mode (fallback if unavailable)"),
+    tui: bool = typer.Option(False, "--tui", help="Launch fullscreen TUI (default interactive mode)"),
+    tui_dev: bool = typer.Option(False, "--tui-dev", help="Launch fullscreen TUI dev path"),
     yolo: bool = typer.Option(False, "--yolo", help="Disable approval prompts for risky tools"),
     provider: str = typer.Option(None, "--provider", "-p", help="Provider override"),
     debug: bool = typer.Option(False, "--debug", help="Enable debug logging"),
@@ -284,57 +901,36 @@ def main(
     prefetch_update_check()
 
     db = SessionDB()
-    if tui or tui_dev:
-        from mlaude.tui_gateway.launcher import can_launch_tui
-        ok, reason = can_launch_tui()
-        if not ok:
-            console.print(f"[dim]TUI unavailable ({reason}); falling back to classic CLI.[/dim]")
-        else:
-            console.print("[dim]TUI runtime scaffold is present, but frontend is not bundled yet; using classic CLI.[/dim]")
-
-    # Discover tools
-    tool_count = discover_tools()
-
-    # Create agent
-    agent = MLaudeAgent(
-        base_url=base_url,
-        model=model,
-        temperature=temperature,
-        quiet_mode=quiet,
-        provider=provider,
-    )
-
-    # Resume session if specified
-    conversation_history: list[dict] = []
     resume_id = resume or session
     if continue_last and not resume_id:
         recent = db.list_sessions(limit=1)
         if recent:
             resume_id = recent[0]["id"]
 
-    if resume_id:
-        resolved = db.resolve_session_id(resume_id) or resume_id
-        history = db.get_openai_messages(resolved)
-        if history:
-            conversation_history = [m for m in history if m.get("role") != "system"]
-            agent.session_id = resolved
-            console.print(f"[dim]Resumed session {resolved[:12]}… ({len(history)} messages)[/dim]")
-        else:
-            console.print(f"[dim]Session {resume_id} not found, starting new.[/dim]")
-
-    # Create DB session
-    if not resume_id:
-        db.create_session(
-            session_id=agent.session_id,
-            platform="cli",
-            model=model,
-        )
-
     # One-shot mode
     if one_shot:
+        discover_tools()
+        agent = MLaudeAgent(
+            base_url=base_url,
+            model=model,
+            temperature=temperature,
+            quiet_mode=quiet,
+            provider=provider,
+            session_db=db,
+        )
+        conversation_history: list[dict] = []
+        if resume_id:
+            resolved = db.resolve_session_id(resume_id) or resume_id
+            history = db.get_openai_messages(resolved)
+            if history:
+                conversation_history = [m for m in history if m.get("role") != "system"]
+                agent.session_id = resolved
+                console.print(f"[dim]Resumed session {resolved[:12]}… ({len(history)} messages)[/dim]")
+            else:
+                console.print(f"[dim]Session {resume_id} not found, starting new.[/dim]")
         spinner = Spinner()
         spinner.start("thinking")
-        result = agent.run_conversation(one_shot)
+        result = agent.run_conversation(one_shot, conversation_history=conversation_history)
         spinner.stop()
         response = result.get("final_response", "")
         if response:
@@ -343,479 +939,19 @@ def main(
             raise typer.Exit(code=1)
         return
 
-    # Interactive mode — print banner
-    build_welcome_banner(
-        console=console,
-        model=model,
+    _ensure_interactive_tty()
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    _launch_tui(
         cwd=os.getcwd(),
-        session_id=agent.session_id,
-        tool_count=tool_count,
+        resume_id=resume_id,
+        provider=provider,
+        model=model,
+        base_url=base_url,
+        temperature=temperature,
+        yolo=yolo,
+        skin=skin,
+        tui_dev=tui_dev,
     )
-
-    # Welcome message
-    from mlaude.skin_engine import get_active_skin
-    welcome = get_active_skin().get_branding("welcome", "")
-    if welcome:
-        console.print(f"\n  [dim]{welcome}[/dim]\n")
-
-    # Setup prompt_toolkit with rich completer
-    from mlaude.skin_engine import get_active_prompt_symbol, get_prompt_toolkit_style_overrides
-    from prompt_toolkit import PromptSession
-
-    _completer = SlashCommandCompleter()
-    _history_file = MLAUDE_HOME / "history"
-    _history_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # Build skin-aware style
-    _tui_style_base = {
-        'input-area': '#FFF8DC',
-        'placeholder': '#555555 italic',
-        'prompt': '#FFF8DC',
-        'prompt-working': '#888888 italic',
-        'completion-menu': 'bg:#1a1a2e #FFF8DC',
-        'completion-menu.completion': 'bg:#1a1a2e #FFF8DC',
-        'completion-menu.completion.current': 'bg:#333355 #FFD700',
-        'completion-menu.meta.completion': 'bg:#1a1a2e #888888',
-        'completion-menu.meta.completion.current': 'bg:#333355 #FFBF00',
-    }
-    _tui_style_base.update(get_prompt_toolkit_style_overrides())
-    _pt_style = PTStyle.from_dict(_tui_style_base)
-
-    prompt_session: PromptSession = PromptSession(
-        completer=_completer,
-        complete_while_typing=True,
-        history=FileHistory(str(_history_file)),
-        auto_suggest=SlashCommandAutoSuggest(
-            history_suggest=AutoSuggestFromHistory(),
-            completer=_completer,
-        ),
-        style=_pt_style,
-    )
-
-    # Interrupt handling
-    _interrupt_count = 0
-
-    def _sigint_handler(sig, frame):
-        nonlocal _interrupt_count
-        _interrupt_count += 1
-        if _interrupt_count >= 2:
-            goodbye = get_active_skin().get_branding("goodbye", "Goodbye!")
-            console.print(f"\n[dim]{goodbye}[/dim]")
-            sys.exit(0)
-        agent.request_interrupt()
-        console.print("\n[dim]Interrupting… (Ctrl+C again to quit)[/dim]")
-
-    signal.signal(signal.SIGINT, _sigint_handler)
-
-    debug_mode = debug
-    current_provider = provider
-    details_mode = bool(config.get("display", {}).get("details_mode", False))
-    busy_mode = str(config.get("display", {}).get("busy_input_mode", "off"))
-    reasoning_mode = "medium"
-    last_user_input = ""
-
-    while True:
-        try:
-            prompt_sym = get_active_prompt_symbol()
-            user_input = prompt_session.prompt(
-                [("class:prompt", prompt_sym)],
-            ).strip()
-        except (EOFError, KeyboardInterrupt):
-            goodbye = get_active_skin().get_branding("goodbye", "Goodbye!")
-            console.print(f"\n[dim]{goodbye}[/dim]")
-            break
-
-        if not user_input:
-            continue
-
-        _interrupt_count = 0
-
-        # Slash commands
-        if user_input.startswith("/"):
-            canonical, args_str = resolve_command(user_input)
-
-            if canonical == "quit":
-                db.end_session(agent.session_id)
-                goodbye = get_active_skin().get_branding("goodbye", "Goodbye!")
-                console.print(f"[dim]{goodbye}[/dim]")
-                break
-
-            elif canonical == "help":
-                _show_help()
-                continue
-
-            elif canonical == "new":
-                conversation_history = []
-                agent = MLaudeAgent(
-                    base_url=base_url, model=model, temperature=temperature,
-                    quiet_mode=quiet, provider=current_provider,
-                )
-                db.create_session(
-                    session_id=agent.session_id, platform="cli", model=model,
-                )
-                console.print("[dim]New session started.[/dim]")
-                continue
-
-            elif canonical == "model":
-                if args_str:
-                    model = args_str.strip()
-                    agent.model = model
-                    console.print(f"[dim]Model set to: {model}[/dim]")
-                else:
-                    console.print(f"[dim]Current model: {agent.model}[/dim]")
-                continue
-
-            elif canonical == "provider":
-                if args_str:
-                    new_provider = args_str.strip()
-                    current_provider = new_provider
-                    from mlaude.providers.registry import get_provider_label
-                    label = get_provider_label(new_provider)
-                    # Recreate agent with new provider
-                    agent = MLaudeAgent(
-                        base_url=base_url, model=model, temperature=temperature,
-                        quiet_mode=quiet, provider=new_provider,
-                    )
-                    agent.session_id = db.create_session(
-                        platform="cli", model=model,
-                    )
-                    conversation_history = []
-                    console.print(f"[dim]Provider set to: {label} (new session)[/dim]")
-                else:
-                    _show_providers()
-                continue
-
-            elif canonical == "temperature":
-                if args_str:
-                    try:
-                        temperature = float(args_str)
-                        agent.temperature = temperature
-                        console.print(f"[dim]Temperature set to: {temperature}[/dim]")
-                    except ValueError:
-                        console.print("[red]Invalid temperature value.[/red]")
-                else:
-                    console.print(f"[dim]Current temperature: {agent.temperature}[/dim]")
-                continue
-
-            elif canonical == "tools":
-                _show_tools()
-                continue
-
-            elif canonical == "toolsets":
-                _show_toolsets()
-                continue
-
-            elif canonical == "skills":
-                _show_skills()
-                continue
-
-            elif canonical == "sessions":
-                _show_sessions(db)
-                continue
-            elif canonical == "usage":
-                s = db.get_session(agent.session_id) or {}
-                console.print(
-                    f"  [bold]Session:[/bold] {agent.session_id[:12]}…  "
-                    f"[bold]Tokens:[/bold] {s.get('total_tokens', 0):,}  "
-                    f"[bold]Cost:[/bold] ${float(s.get('total_cost', 0.0)):.4f}"
-                )
-                continue
-            elif canonical == "compress":
-                source_id = agent.session_id
-                new_sid = db.create_continuation_session(source_id)
-                agent.session_id = new_sid
-                conversation_history = []
-                console.print(
-                    f"[dim]Compressed context into new continuation session {new_sid[:12]}… "
-                    f"(parent {source_id[:12]}…)[/dim]"
-                )
-                continue
-            elif canonical == "title":
-                if args_str.strip():
-                    db.update_session_title(agent.session_id, args_str.strip())
-                    console.print("[dim]Session title updated.[/dim]")
-                else:
-                    s = db.get_session(agent.session_id) or {}
-                    console.print(f"[dim]Title: {s.get('title', '') or '(untitled)'}[/dim]")
-                continue
-            elif canonical == "retry":
-                if last_user_input:
-                    user_input = last_user_input
-                else:
-                    console.print("[dim]No prior user message to retry.[/dim]")
-                    continue
-            elif canonical == "undo":
-                if len(conversation_history) >= 2:
-                    conversation_history = conversation_history[:-2]
-                    console.print("[dim]Removed last conversation turn from in-memory context.[/dim]")
-                else:
-                    console.print("[dim]Not enough context to undo.[/dim]")
-                continue
-
-            elif canonical == "resume":
-                sid = args_str.strip()
-                if not sid:
-                    _show_sessions(db)
-                    console.print("[dim]Usage: /resume <session_id>[/dim]")
-                    continue
-                full_sessions = db.list_sessions(limit=100)
-                match = None
-                for s in full_sessions:
-                    if s["id"].startswith(sid):
-                        match = s
-                        break
-                if match:
-                    history = db.get_openai_messages(match["id"])
-                    conversation_history = [m for m in history if m.get("role") != "system"]
-                    agent.session_id = match["id"]
-                    console.print(
-                        f"[dim]Resumed session {match['id'][:12]}… "
-                        f"({len(conversation_history)} messages)[/dim]"
-                    )
-                else:
-                    console.print(f"[dim]Session not found: {sid}[/dim]")
-                continue
-
-            elif canonical == "delete":
-                sid = args_str.strip()
-                if not sid:
-                    console.print("[dim]Usage: /delete <session_id>[/dim]")
-                    continue
-                full_sessions = db.list_sessions(limit=100)
-                match = None
-                for s in full_sessions:
-                    if s["id"].startswith(sid):
-                        match = s
-                        break
-                if match:
-                    db.delete_session(match["id"])
-                    console.print(f"[dim]Deleted session {match['id'][:12]}…[/dim]")
-                else:
-                    console.print(f"[dim]Session not found: {sid}[/dim]")
-                continue
-
-            elif canonical == "search":
-                query = args_str.strip()
-                if not query:
-                    console.print("[dim]Usage: /search <query>[/dim]")
-                    continue
-                results = db.search_sessions(query)
-                if results:
-                    table = Table(title=f"[bold]Search: {query}[/bold]", border_style="dim")
-                    table.add_column("ID", style="dim", max_width=12)
-                    table.add_column("Title")
-                    table.add_column("Updated", style="dim")
-                    for s in results:
-                        table.add_row(s["id"][:12], s.get("title", ""), s.get("updated_at", "")[:19])
-                    console.print(table)
-                else:
-                    console.print(f"[dim]No results for: {query}[/dim]")
-                continue
-
-            elif canonical == "copy":
-                # Copy last assistant response to clipboard
-                if conversation_history:
-                    last_msg = None
-                    for m in reversed(conversation_history):
-                        if m.get("role") == "assistant" and m.get("content"):
-                            last_msg = m["content"]
-                            break
-                    if last_msg:
-                        try:
-                            import subprocess
-                            proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
-                            proc.communicate(last_msg.encode())
-                            console.print("[dim]Copied last response to clipboard.[/dim]")
-                        except Exception:
-                            console.print("[dim]Clipboard not available.[/dim]")
-                    else:
-                        console.print("[dim]No assistant response to copy.[/dim]")
-                else:
-                    console.print("[dim]No conversation history.[/dim]")
-                continue
-
-            elif canonical == "history":
-                msgs = db.get_messages(agent.session_id, limit=20)
-                for m in msgs:
-                    role = m["role"]
-                    content = (m.get("content") or "")[:100]
-                    console.print(f"  [bold]{role}[/bold]: {content}")
-                continue
-
-            elif canonical == "stats":
-                _show_stats(db)
-                continue
-
-            elif canonical == "version":
-                console.print(f"[dim]mlaude v{VERSION}[/dim]")
-                continue
-
-            elif canonical == "debug":
-                debug_mode = not debug_mode
-                level = logging.DEBUG if debug_mode else logging.WARNING
-                logging.getLogger("mlaude").setLevel(level)
-                console.print(f"[dim]Debug: {'on' if debug_mode else 'off'}[/dim]")
-                continue
-            elif canonical == "busy":
-                if args_str.strip() in {"on", "off"}:
-                    busy_mode = args_str.strip()
-                    save_config_value("display.busy_input_mode", busy_mode)
-                console.print(f"[dim]Busy input mode: {busy_mode}[/dim]")
-                continue
-            elif canonical == "reasoning":
-                if args_str.strip() in {"low", "medium", "high"}:
-                    reasoning_mode = args_str.strip()
-                console.print(f"[dim]Reasoning mode: {reasoning_mode}[/dim]")
-                continue
-            elif canonical == "details":
-                if args_str.strip() in {"on", "off"}:
-                    details_mode = args_str.strip() == "on"
-                    save_config_value("display.details_mode", details_mode)
-                console.print(f"[dim]Details mode: {'on' if details_mode else 'off'}[/dim]")
-                continue
-
-            elif canonical == "system":
-                if args_str:
-                    agent.system_prompt = args_str
-                    console.print("[dim]System prompt updated.[/dim]")
-                else:
-                    console.print(f"[dim]{agent.system_prompt[:200]}[/dim]")
-                continue
-
-            elif canonical == "skin":
-                if args_str:
-                    skin_name = args_str.strip()
-                    set_active_skin(skin_name)
-                    save_config_value("display.skin", skin_name)
-                    console.print(f"[dim]Skin set to: {skin_name}[/dim]")
-                else:
-                    _show_skins()
-                continue
-
-            elif canonical == "config":
-                _show_config(model, base_url, temperature, current_provider or "auto")
-                continue
-
-            else:
-                console.print(f"[dim]Unknown command: {user_input.split()[0]}[/dim]")
-                continue
-
-        # Agent interaction
-        agent._interrupt_requested = False
-        spinner = Spinner()
-
-        def on_tool_start(name: str, args: dict) -> None:
-            spinner.stop()
-            console.print(format_tool_start(name, args))
-            spinner.start(f"{name}")
-
-        def on_tool_end(name: str, result: str) -> None:
-            spinner.stop()
-            console.print(format_tool_end(name, result))
-            spinner.start()
-
-        agent.on_tool_start = on_tool_start
-        agent.on_tool_end = on_tool_end
-
-        spinner.start()
-        last_user_input = user_input
-
-        try:
-            result = agent.run_conversation(
-                user_message=user_input,
-                conversation_history=conversation_history,
-            )
-        except Exception as e:
-            spinner.stop()
-            console.print(f"[red]Error: {e}[/red]")
-            continue
-
-        spinner.stop()
-
-        final = result.get("final_response", "")
-        if final:
-            # Skin-aware response panel
-            from mlaude.skin_engine import get_active_skin
-            skin = get_active_skin()
-            response_label = skin.get_branding("response_label", " 💀 mlaude ")
-            response_border = skin.get_color("response_border", "#FFD700")
-
-            console.print()
-            if details_mode:
-                console.print(f"[dim]reasoning={reasoning_mode} busy={busy_mode}[/dim]")
-            console.print(
-                Panel(
-                    Markdown(final),
-                    border_style=response_border,
-                    title=f"[dim]{response_label}[/dim]",
-                    title_align="left",
-                    padding=(1, 2),
-                )
-            )
-            console.print()
-
-        # Persist messages
-        db.add_message(
-            session_id=agent.session_id,
-            role="user",
-            content=user_input,
-        )
-        if final:
-            db.add_message(
-                session_id=agent.session_id,
-                role="assistant",
-                content=final,
-            )
-        # Retry once with explicit approval for blocked risky tools.
-        if not final:
-            msgs = result.get("messages", [])
-            blocked = None
-            for m in reversed(msgs):
-                if m.get("role") == "tool":
-                    try:
-                        payload = json.loads(m.get("content") or "{}")
-                    except Exception:
-                        payload = {}
-                    if payload.get("error") == "approval_required":
-                        blocked = payload
-                        break
-            if blocked:
-                tool = blocked.get("tool", "tool")
-                console.print(f"[yellow]Approval required for {tool}.[/yellow] Run once? [y/N]")
-                try:
-                    resp = prompt_session.prompt([("class:prompt", "approve> ")]).strip().lower()
-                except Exception:
-                    resp = "n"
-                if resp in {"y", "yes"}:
-                    from mlaude.tools.registry import registry
-                    manual = registry.dispatch(
-                        tool,
-                        blocked.get("args", {}),
-                        task_id=agent.session_id,
-                        approval_granted=True,
-                        enforce_safety=True,
-                    )
-                    console.print(format_tool_end(tool, manual))
-
-        # Auto-title on first user message
-        if len(conversation_history) == 0 and final:
-            title = user_input[:60]
-            db.update_session_title(agent.session_id, title)
-
-        # Update conversation history
-        conversation_history = [
-            m for m in result.get("messages", [])
-            if m.get("role") != "system"
-        ]
-
-        # Show stats
-        iters = result.get("iterations_used", 0)
-        reason = result.get("stop_reason", "")
-        if not quiet and iters > 0:
-            console.print(
-                f"  [dim]({iters} API call{'s' if iters != 1 else ''}"
-                f"{f' · {reason}' if reason != 'complete' else ''})[/dim]"
-            )
 
 
 # ---------------------------------------------------------------------------

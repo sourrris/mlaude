@@ -33,6 +33,7 @@ def discover_tools() -> int:
 def get_tool_definitions(
     enabled_toolsets: list[str] | None = None,
     disabled_toolsets: list[str] | None = None,
+    allowed_tool_names: list[str] | None = None,
     quiet: bool = False,
 ) -> list[dict]:
     """Return OpenAI-format tool schemas for the currently active tools.
@@ -43,6 +44,7 @@ def get_tool_definitions(
     definitions = registry.get_definitions(
         enabled_toolsets=enabled_toolsets,
         disabled_toolsets=disabled_toolsets,
+        allowed_tool_names=allowed_tool_names,
     )
     if not quiet:
         logger.debug("Providing %d tool definitions", len(definitions))
@@ -53,6 +55,7 @@ def handle_function_call(
     function_name: str,
     function_args: dict[str, Any] | str,
     task_id: str | None = None,
+    approval_granted: bool = False,
 ) -> str:
     """Dispatch a tool call and return the result as a JSON string.
 
@@ -76,6 +79,7 @@ def handle_function_call(
         name=function_name,
         args=function_args,
         task_id=task_id,
+        approval_granted=approval_granted,
         enforce_safety=True,
     )
 

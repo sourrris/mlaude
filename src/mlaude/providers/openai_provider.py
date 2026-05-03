@@ -42,6 +42,7 @@ class OpenAIProvider(BaseProvider):
             "messages": messages,
             "temperature": temperature,
         }
+        self._apply_reasoning_effort(payload, kwargs.get("reasoning_effort"))
         if tools:
             payload["tools"] = tools
 
@@ -64,6 +65,7 @@ class OpenAIProvider(BaseProvider):
                 "completion_tokens": usage.get("completion_tokens", 0),
                 "total_tokens": usage.get("total_tokens", 0),
             },
+            raw_message=message,
         )
 
     def stream_chat(

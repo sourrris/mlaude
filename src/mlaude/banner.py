@@ -211,7 +211,6 @@ def build_welcome_banner(
     right_lines = [f"[bold {accent}]Available Tools[/]"]
 
     # Group tools by toolset
-    from mlaude.model_tools import get_toolset_for_tool
     from mlaude.tools.registry import registry
 
     all_tools = registry.get_all()

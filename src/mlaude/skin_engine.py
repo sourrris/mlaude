@@ -52,22 +52,32 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         "name": "default",
         "description": "Classic mlaude — gold and kawaii",
         "colors": {
-            "banner_border": "#CD7F32",
-            "banner_title": "#FFD700",
-            "banner_accent": "#FFBF00",
-            "banner_dim": "#B8860B",
-            "banner_text": "#FFF8DC",
-            "ui_accent": "#FFBF00",
-            "ui_label": "#DAA520",
+            "banner_border": "#8A5A17",
+            "banner_title": "#F4E8C1",
+            "banner_accent": "#D3A10D",
+            "banner_dim": "#8B6A17",
+            "banner_text": "#F3EFD9",
+            "ui_accent": "#D3A10D",
+            "ui_label": "#C59810",
             "ui_ok": "#4caf50",
             "ui_error": "#ef5350",
             "ui_warn": "#ffa726",
-            "prompt": "#FFF8DC",
-            "input_rule": "#CD7F32",
-            "response_border": "#FFD700",
-            "status_bar_bg": "#1a1a2e",
-            "session_label": "#DAA520",
-            "session_border": "#8B8682",
+            "prompt": "#F4E8C1",
+            "input_rule": "#8A5A17",
+            "response_border": "#D3A10D",
+            "status_bar_bg": "#151515",
+            "session_label": "#C59810",
+            "session_border": "#6C5A30",
+            "transcript_bg": "#181818",
+            "transcript_text": "#F3EFD9",
+            "transcript_dim": "#8B7A55",
+            "chat_header_rule": "#B88A11",
+            "chat_assistant_label": "#FFD447",
+            "chat_notice": "#B88A11",
+            "status_bar_text": "#B88A11",
+            "status_bar_strong": "#FFD447",
+            "input_bg": "#181818",
+            "input_text": "#F4E8C1",
         },
         "spinner": {},
         "branding": {
@@ -77,6 +87,9 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "response_label": " 💀 mlaude ",
             "prompt_symbol": "❯ ",
             "help_header": "(^_^)? Available Commands",
+            "assistant_name": "mlaude",
+            "assistant_icon": "☠",
+            "input_prompt": "›",
         },
         "tool_prefix": "┊",
     },
@@ -481,4 +494,41 @@ def get_prompt_toolkit_style_overrides() -> Dict[str, str]:
         "completion-menu.completion.current": f"bg:#333355 {title}",
         "completion-menu.meta.completion": f"bg:{status_bg} {dim}",
         "completion-menu.meta.completion.current": f"bg:#333355 {accent}",
+    }
+
+
+def get_fullscreen_style_overrides() -> Dict[str, str]:
+    """Return style overrides for the full-screen interactive shell."""
+    try:
+        skin = get_active_skin()
+    except Exception:
+        return {}
+
+    transcript_bg = skin.get_color("transcript_bg", "#181818")
+    transcript_text = skin.get_color("transcript_text", skin.get_color("banner_text", "#F3EFD9"))
+    transcript_dim = skin.get_color("transcript_dim", skin.get_color("banner_dim", "#8B7A55"))
+    prompt = skin.get_color("prompt", "#F4E8C1")
+    input_bg = skin.get_color("input_bg", transcript_bg)
+    input_text = skin.get_color("input_text", prompt)
+    input_rule = skin.get_color("input_rule", "#8A5A17")
+    status_bg = skin.get_color("status_bar_bg", "#151515")
+    status_text = skin.get_color("status_bar_text", skin.get_color("banner_dim", "#8B7A55"))
+    status_strong = skin.get_color("status_bar_strong", skin.get_color("banner_title", "#FFD447"))
+
+    return {
+        "transcript": f"bg:{transcript_bg} {transcript_text}",
+        "transcript-shell": f"bg:{transcript_bg} {transcript_text}",
+        "transcript-dim": f"bg:{transcript_bg} {transcript_dim}",
+        "status-bar": f"bg:{status_bg} {status_text}",
+        "status-bar-strong": f"bg:{status_bg} {status_strong} bold",
+        "input-rule": input_rule,
+        "prompt": f"bg:{input_bg} {prompt} bold",
+        "input-shell": f"bg:{input_bg} {input_text}",
+        "input-area": f"bg:{input_bg} {input_text}",
+        "placeholder": f"{transcript_dim} italic",
+        "completion-menu": f"bg:{status_bg} {transcript_text}",
+        "completion-menu.completion": f"bg:{status_bg} {transcript_text}",
+        "completion-menu.completion.current": f"bg:#333333 {status_strong}",
+        "completion-menu.meta.completion": f"bg:{status_bg} {transcript_dim}",
+        "completion-menu.meta.completion.current": f"bg:#333333 {status_text}",
     }

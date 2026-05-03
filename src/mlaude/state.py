@@ -346,12 +346,26 @@ class SessionDB:
                     m["tool_calls"] = json.loads(msg["tool_calls"])
                 except (json.JSONDecodeError, TypeError):
                     pass
+                if msg.get("reasoning"):
+                    m["reasoning"] = msg["reasoning"]
             else:
                 m["content"] = msg["content"] or ""
+                if msg["role"] == "assistant" and msg.get("reasoning"):
+                    m["reasoning"] = msg["reasoning"]
 
             result.append(m)
 
         return result
+
+    def get_session_depth(self, session_id: str) -> int:
+        """Return delegation depth based on parent_session_id lineage."""
+        depth = 0
+        current = self.get_session(session_id)
+        while current and current.get("parent_session_id"):
+            depth += 1
+            parent_id = current.get("parent_session_id")
+            current = self.get_session(parent_id) if parent_id else None
+        return depth
 
     # ------------------------------------------------------------------
     # Search

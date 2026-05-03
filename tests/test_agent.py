@@ -67,6 +67,18 @@ class TestMLaudeAgentLoop(unittest.TestCase):
         assert result["final_response"] == "Hello! How can I help you?"
         assert result["iterations_used"] == 1
         assert result["stop_reason"] == "complete"
+        assert result["latest_usage"] == {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        assert result["turn_usage"] == {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        assert result["model_label"] == agent.model
+        assert result["provider_label"]
 
     def test_tool_call_cycle(self):
         """Agent executes tool calls and loops until text response."""
@@ -93,10 +105,17 @@ class TestMLaudeAgentLoop(unittest.TestCase):
                     }],
                 }
             else:
-                return {
-                    "role": "assistant",
-                    "content": "I found the answer: hello world!",
-                }
+                from mlaude.providers.base import LLMResponse
+
+                return LLMResponse(
+                    content="I found the answer: hello world!",
+                    model="test-model-v2",
+                    usage={
+                        "prompt_tokens": 10,
+                        "completion_tokens": 12,
+                        "total_tokens": 22,
+                    },
+                )
 
         agent._call_llm = mock_llm
         agent._dispatch_tool = MagicMock(
@@ -107,6 +126,9 @@ class TestMLaudeAgentLoop(unittest.TestCase):
         assert result["final_response"] == "I found the answer: hello world!"
         assert result["iterations_used"] == 2
         assert result["stop_reason"] == "complete"
+        assert result["latest_usage"]["total_tokens"] == 22
+        assert result["turn_usage"]["total_tokens"] == 22
+        assert result["model_label"] == "test-model-v2"
         agent._dispatch_tool.assert_called_once()
 
     def test_budget_exhaustion(self):

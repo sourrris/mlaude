@@ -19,6 +19,13 @@ LOGS_DIR = MLAUDE_HOME / "logs"
 SKILLS_DIR = MLAUDE_HOME / "skills"
 SKINS_DIR = MLAUDE_HOME / "skins"
 CONFIG_FILE = MLAUDE_HOME / "config.yaml"
+MLAUDE_TUI = os.environ.get("MLAUDE_TUI", "")
+MLAUDE_TUI_DIR = os.environ.get("MLAUDE_TUI_DIR", "")
+MLAUDE_TUI_RESUME = os.environ.get("MLAUDE_TUI_RESUME", "")
+MLAUDE_TUI_PROVIDER = os.environ.get("MLAUDE_TUI_PROVIDER", "")
+MLAUDE_PYTHON_SRC_ROOT = os.environ.get("MLAUDE_PYTHON_SRC_ROOT", "")
+MLAUDE_PYTHON = os.environ.get("MLAUDE_PYTHON", "")
+MLAUDE_CWD = os.environ.get("MLAUDE_CWD", "")
 
 # ── LLM ────────────────────────────────────────────────────────────────────
 LLM_BASE_URL = os.environ.get("MLAUDE_LLM_BASE_URL", "http://127.0.0.1:11434")
@@ -97,3 +104,45 @@ def save_config_value(key: str, value) -> None:
         CONFIG_FILE.write_text(yaml.dump(config, default_flow_style=False))
     except Exception:
         pass
+
+
+def normalize_details_mode(value) -> str:
+    """Normalize legacy and modern details mode values."""
+    if isinstance(value, bool):
+        return "expanded" if value else "hidden"
+    text = str(value or "").strip().lower()
+    if text in {"expanded", "hidden", "compact"}:
+        return text
+    if text in {"on", "true", "1", "yes"}:
+        return "expanded"
+    if text in {"off", "false", "0", "no"}:
+        return "hidden"
+    return "hidden"
+
+
+def get_display_config(config: dict | None = None) -> dict[str, object]:
+    """Return display config with Hermes-compatible defaults."""
+    data = config if config is not None else load_config()
+    display = dict(data.get("display", {}) or {})
+    return {
+        "skin": str(display.get("skin", "") or ""),
+        "busy_input_mode": str(display.get("busy_input_mode", "off") or "off"),
+        "details_mode": normalize_details_mode(display.get("details_mode", False)),
+        "sections": display.get(
+            "sections",
+            {
+                "reasoning": True,
+                "tools": True,
+                "status": True,
+            },
+        ),
+        "tui_statusbar": display.get(
+            "tui_statusbar",
+            {
+                "show_model": True,
+                "show_provider": True,
+                "show_session": True,
+                "show_tokens": True,
+            },
+        ),
+    }

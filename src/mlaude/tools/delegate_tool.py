@@ -1,60 +1,92 @@
-"""Delegate tool — subagent task spawning.
-
-Allows the agent to spawn a subagent with its own iteration budget to
-handle a subtask in isolation, then return the result.
-"""
+"""Structured, bounded subagent delegation."""
 
 from __future__ import annotations
 
 import logging
 
+from mlaude.state import SessionDB
 from mlaude.tools.registry import registry, tool_error, tool_result
 
 logger = logging.getLogger(__name__)
+
+_MAX_DELEGATION_DEPTH = 2
 
 
 def _delegate_task(
     task: str,
     context: str = "",
+    expected_output: str = "",
+    allowed_toolsets: list[str] | None = None,
     max_iterations: int = 15,
     model: str = "",
-    task_id: str = None,
+    task_id: str | None = None,
 ) -> str:
-    """Spawn a subagent to handle a subtask."""
+    """Spawn a focused subagent with explicit context and bounded depth."""
     from mlaude.agent import MLaudeAgent
 
-    # Create subagent with limited budget
-    subagent = MLaudeAgent(
-        model=model or "",  # Inherit default
-        max_iterations=max_iterations,
-        quiet_mode=True,
-        platform="subagent",
-    )
+    db = SessionDB()
+    depth = db.get_session_depth(task_id) if task_id else 0
+    if depth >= _MAX_DELEGATION_DEPTH:
+        return tool_error(
+            "Maximum delegation depth reached.",
+            status="blocked",
+            stop_reason="depth_limit",
+        )
 
-    # Build the prompt
-    prompt = task
+    session_id = db.create_session(
+        platform="subagent",
+        model=model or "",
+        title=f"delegate:{task[:40]}",
+        parent_session_id=task_id,
+    )
+    prompt_parts = []
     if context:
-        prompt = f"Context:\n{context}\n\nTask:\n{task}"
+        prompt_parts.append(f"Context:\n{context}")
+    if expected_output:
+        prompt_parts.append(f"Expected output:\n{expected_output}")
+    prompt_parts.append(f"Task:\n{task}")
+    prompt = "\n\n".join(prompt_parts)
 
     try:
+        subagent = MLaudeAgent(
+            model=model or "",
+            max_iterations=max_iterations,
+            quiet_mode=True,
+            platform="subagent",
+            enabled_toolsets=allowed_toolsets,
+            session_id=session_id,
+            session_db=db,
+        )
         result = subagent.run_conversation(
             user_message=prompt,
             system_message=(
-                "You are a focused subagent. Complete the given task efficiently. "
-                "Use tools as needed. Be concise in your final response."
+                "You are a focused subagent. Complete only the delegated task. "
+                "Use only the permitted tools. Be concise and return the requested output."
             ),
         )
-
-        return tool_result({
-            "task": task[:200],
-            "response": result.get("final_response", ""),
-            "iterations_used": result.get("iterations_used", 0),
-            "stop_reason": result.get("stop_reason", ""),
-        })
-
-    except Exception as e:
-        logger.error("Subagent failed: %s", e)
-        return tool_error(f"Subagent failed: {e}")
+        summary = result.get("final_response", "")
+        return tool_result(
+            {
+                "status": "completed" if summary else "incomplete",
+                "summary": summary,
+                "artifacts": [],
+                "suggested_next_step": "Use the summary directly or refine the task.",
+                "iterations_used": result.get("iterations_used", 0),
+                "stop_reason": result.get("stop_reason", ""),
+                "session_id": session_id,
+            }
+        )
+    except Exception as exc:
+        logger.error("Subagent failed: %s", exc)
+        return tool_error(
+            f"Subagent failed: {exc}",
+            status="failed",
+            summary="",
+            artifacts=[],
+            suggested_next_step="Retry with narrower context or fewer tools.",
+            iterations_used=0,
+            stop_reason="error",
+        )
 
 
 registry.register(
@@ -63,26 +95,17 @@ registry.register(
     schema={
         "name": "delegate_task",
         "description": (
-            "Delegate a subtask to a separate subagent. The subagent gets its own "
-            "iteration budget and tool access. Use this for complex tasks that "
-            "benefit from isolated execution."
+            "Delegate a bounded research, summarization, or comparison subtask to a "
+            "focused subagent with explicit context and tool restrictions."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "task": {
-                    "type": "string",
-                    "description": "Clear description of the subtask to accomplish.",
-                },
-                "context": {
-                    "type": "string",
-                    "description": "Additional context for the subagent. Optional.",
-                },
-                "max_iterations": {
-                    "type": "integer",
-                    "description": "Max tool-calling iterations for the subagent (default 15).",
-                    "default": 15,
-                },
+                "task": {"type": "string"},
+                "context": {"type": "string"},
+                "expected_output": {"type": "string"},
+                "allowed_toolsets": {"type": "array", "items": {"type": "string"}},
+                "max_iterations": {"type": "integer", "default": 15},
             },
             "required": ["task"],
         },
@@ -90,7 +113,9 @@ registry.register(
     handler=lambda args, **kw: _delegate_task(
         task=args.get("task", ""),
         context=args.get("context", ""),
-        max_iterations=args.get("max_iterations", 15),
+        expected_output=args.get("expected_output", ""),
+        allowed_toolsets=args.get("allowed_toolsets"),
+        max_iterations=int(args.get("max_iterations", 15)),
         model=args.get("model", ""),
         task_id=kw.get("task_id"),
     ),

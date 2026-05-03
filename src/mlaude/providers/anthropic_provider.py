@@ -117,6 +117,8 @@ class AnthropicProvider(BaseProvider):
             "max_tokens": kwargs.get("max_tokens", 8192),
             "temperature": temperature,
         }
+        if kwargs.get("reasoning_effort"):
+            payload["thinking"] = {"type": "enabled", "budget_tokens": 2048}
         if system:
             payload["system"] = system
         if tools:
@@ -158,6 +160,7 @@ class AnthropicProvider(BaseProvider):
                     usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
                 ),
             },
+            raw_message={"content": data.get("content", [])},
         )
 
     def stream_chat(

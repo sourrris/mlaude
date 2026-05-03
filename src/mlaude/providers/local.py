@@ -34,6 +34,7 @@ class LocalProvider(BaseProvider):
             "messages": messages,
             "temperature": temperature,
         }
+        self._apply_reasoning_effort(payload, kwargs.get("reasoning_effort"))
         if tools:
             payload["tools"] = tools
 
@@ -56,6 +57,8 @@ class LocalProvider(BaseProvider):
                 "completion_tokens": usage.get("completion_tokens", 0),
                 "total_tokens": usage.get("total_tokens", 0),
             },
+            reasoning=str(message.get("reasoning", "") or ""),
+            raw_message=message,
         )
 
     def stream_chat(

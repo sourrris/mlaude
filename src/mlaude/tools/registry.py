@@ -171,17 +171,21 @@ class ToolRegistry:
         self,
         enabled_toolsets: list[str] | None = None,
         disabled_toolsets: list[str] | None = None,
+        allowed_tool_names: list[str] | None = None,
     ) -> list[dict]:
         """Return OpenAI-format tool schemas for the active tools.
 
         Filters by toolset inclusion/exclusion and availability.
         """
         definitions = []
+        allowed_names = set(allowed_tool_names or [])
         for name, entry in self._tools.items():
             # Toolset filter
             if enabled_toolsets and entry.toolset not in enabled_toolsets:
                 continue
             if disabled_toolsets and entry.toolset in disabled_toolsets:
+                continue
+            if allowed_tool_names is not None and name not in allowed_names:
                 continue
             # Availability check
             if not entry.is_available():

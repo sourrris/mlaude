@@ -25,6 +25,7 @@ class LLMResponse:
     model: str = ""
     usage: dict[str, int] = field(default_factory=dict)
     reasoning: str = ""
+    raw_message: dict[str, Any] = field(default_factory=dict)
 
     def to_message(self) -> dict[str, Any]:
         """Convert to OpenAI-format assistant message dict."""
@@ -59,6 +60,8 @@ class BaseProvider(ABC):
         self.api_key = api_key
         self.default_model = default_model
         self.timeout = timeout
+        self.supports_streaming_text = True
+        self.supports_streaming_tools = False
 
     @abstractmethod
     def chat_completions(
@@ -100,6 +103,12 @@ class BaseProvider(ABC):
         return headers
 
     @staticmethod
+    def _apply_reasoning_effort(payload: dict[str, Any], reasoning_effort: str | None) -> None:
+        """Attach OpenAI-style reasoning hints when a provider supports them."""
+        if reasoning_effort:
+            payload["reasoning"] = {"effort": reasoning_effort}
+
+    @staticmethod
     def _parse_tool_calls(raw: list[dict] | None) -> list[dict] | None:
         """Normalize raw tool_calls from API response."""
         if not raw:
@@ -116,3 +125,7 @@ class BaseProvider(ABC):
                 },
             })
         return result
+
+    @staticmethod
+    def build_streaming_response(content: str, reasoning: str = "") -> LLMResponse:
+        return LLMResponse(content=content, reasoning=reasoning)

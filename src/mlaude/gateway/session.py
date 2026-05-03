@@ -71,6 +71,7 @@ class GatewaySessionManager:
             platform=platform,
             session_id=session_id,
             quiet_mode=True,
+            session_db=self._db,
         )
 
         # Load existing conversation history
